@@ -14,7 +14,7 @@ namespace NPS.NetSpeed.UI;
 internal sealed class NetSpeedDetailPage : IDetailPage
 {
     private const float LayoutW = 360f;
-    private const float LayoutH = 234f;
+    private const float LayoutH = 262f;
 
     private const float PaddingX = 18f;
 
@@ -45,6 +45,9 @@ internal sealed class NetSpeedDetailPage : IDetailPage
     private static readonly SKRect NicRow = new(PaddingX, 74f, LayoutW - PaddingX, 98f);
     private const float NicValueX = 52f;        // 网卡名起始 x
     private const float NicValueMaxRight = 270f; // 网卡名可用宽度右界（右侧留给「点击切换」提示）
+
+    // 火绒流量监控行：点击拉起火绒 NetFlow.exe（回退主界面 wsctrl.exe）
+    private static readonly SKRect FlowRow = new(PaddingX, 104f, LayoutW - PaddingX, 128f);
 
     private readonly NetSpeedPlugin _plugin;
     private readonly float[] _downSamples = new float[NetSpeedState.HistoryCapacity];
@@ -104,18 +107,19 @@ internal sealed class NetSpeedDetailPage : IDetailPage
         DrawChip(canvas, RowChip, "双行", mode == SpeedMode.DualRow, downAccent, faint, sub, alpha);
 
         DrawNicRow(canvas, text, sub, faint, alpha);
+        DrawFlowRow(canvas, text, sub, faint);
 
         using (var rule = new SKPaint { IsAntialias = true, Color = divider })
         {
-            canvas.DrawRect(PaddingX, 106f, LayoutW - PaddingX * 2f, 0.8f, rule);
+            canvas.DrawRect(PaddingX, 136f, LayoutW - PaddingX * 2f, 0.8f, rule);
         }
 
-        DrawMetric(canvas, 112f, true, snapshot.DownBps, downAccent, text, sub, frame, count);
-        DrawMetric(canvas, 164f, false, snapshot.UpBps, upAccent, text, sub, frame, count);
+        DrawMetric(canvas, 144f, true, snapshot.DownBps, downAccent, text, sub, frame, count);
+        DrawMetric(canvas, 196f, false, snapshot.UpBps, upAccent, text, sub, frame, count);
 
         using (var hint = MakePaint(9f, sub, false))
         {
-            canvas.DrawText("左键点击岛上组件可快速切换 · 右键展开 / 收起", PaddingX, 224f, hint);
+            canvas.DrawText("左键点击岛上组件可快速切换 · 右键展开 / 收起", PaddingX, 252f, hint);
         }
     }
 
@@ -144,6 +148,31 @@ internal sealed class NetSpeedDetailPage : IDetailPage
         {
             tip.TextAlign = SKTextAlign.Right;
             canvas.DrawText("点击切换 ▸", NicRow.Right - 10f, NicRow.MidY + 3.8f, tip);
+        }
+    }
+
+    /// <summary>火绒流量监控行：浅色圆角条，左侧固定标签，右侧「点击打开 ▸」提示。</summary>
+    private static void DrawFlowRow(SKCanvas canvas, SKColor text, SKColor sub, SKColor faint)
+    {
+        using (var fill = new SKPaint { IsAntialias = true, Color = faint })
+        {
+            canvas.DrawRoundRect(FlowRow, 8f, 8f, fill);
+        }
+
+        using (var label = MakePaint(10.5f, sub, false))
+        {
+            canvas.DrawText("火绒", FlowRow.Left + 10f, FlowRow.MidY + 3.6f, label);
+        }
+
+        using (var value = MakePaint(10.5f, text, true))
+        {
+            canvas.DrawText("打开流量监控", FlowRow.Left + 52f, FlowRow.MidY + 3.6f, value);
+        }
+
+        using (var tip = MakePaint(9f, sub, false))
+        {
+            tip.TextAlign = SKTextAlign.Right;
+            canvas.DrawText("点击打开 ▸", FlowRow.Right - 10f, FlowRow.MidY + 3.8f, tip);
         }
     }
 
@@ -223,6 +252,7 @@ internal sealed class NetSpeedDetailPage : IDetailPage
         if (HitChip(SideChip, lx, ly)) return new WidgetHit("mode:0");
         if (HitChip(RowChip, lx, ly)) return new WidgetHit("mode:1");
         if (HitChip(NicRow, lx, ly)) return new WidgetHit("nic:next");
+        if (HitChip(FlowRow, lx, ly)) return new WidgetHit("open:netflow");
         return WidgetHit.None;
     }
 
@@ -240,6 +270,11 @@ internal sealed class NetSpeedDetailPage : IDetailPage
         if (action == "nic:next")
         {
             _plugin.CycleNic();
+            return;
+        }
+        if (action == "open:netflow")
+        {
+            _plugin.OpenHuorongMonitor();
             return;
         }
         if (action == "mode:0") _plugin.SetMode(SpeedMode.SideBySide);

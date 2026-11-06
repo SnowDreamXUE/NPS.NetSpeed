@@ -34,10 +34,10 @@ public sealed class NetSpeedPlugin : INotchPlugin, IDisposable
 
     public string Id => "com.snow.netspeed";
     public string DisplayName => "网络速度";
-    public string Version => "1.0.0";
+    public string Version => "1.1.0";
     public string Author => "Snow";
 
-    /// <summary>当前采样间隔档位索引（0=100ms / 1=1秒 / 2=5秒 / 3=10秒）。</summary>
+    /// <summary>当前采样间隔档位索引（0=100ms / 1=500ms / 2=1秒 / 3=5秒 / 4=10秒）。</summary>
     public int IntervalIndex => _intervalIndex;
 
     /// <summary>详情页网卡行显示名：全部 / 当前网卡名 / 已拔出提示。</summary>
@@ -186,6 +186,27 @@ public sealed class NetSpeedPlugin : INotchPlugin, IDisposable
         try { _host?.SetSetting("nic", _nicId); } catch { }
         ApplySamplerConfig();
         try { _host?.RequestRedraw(); } catch { }
+    }
+
+    /// <summary>打开火绒流量监控：优先 NetFlow.exe 直达，回退主界面 wsctrl.exe；都找不到则提示。</summary>
+    internal void OpenHuorongMonitor()
+    {
+        HuorongTarget? target = null;
+        try { target = HuorongLauncher.Resolve(); } catch { }
+
+        bool started = target is { } t && HuorongLauncher.TryStart(t.ExePath);
+        if (!started)
+        {
+            try
+            {
+                _host?.PostReminder(new ReminderData
+                {
+                    Title = "无法打开火绒流量监控",
+                    Body = "未检测到火绒安全软件（NetFlow.exe / wsctrl.exe），请确认火绒已安装",
+                });
+            }
+            catch { }
+        }
     }
 
     public void Dispose()
