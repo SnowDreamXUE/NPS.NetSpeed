@@ -17,7 +17,7 @@ public sealed class NetSpeedPlugin : INotchPlugin, IDisposable
     private IPluginHost? _host;
     private IDisposable? _timer;
 
-    public string Id => "com.nps.netspeed";
+    public string Id => "com.snow.netspeed";
     public string DisplayName => "网络速度";
     public string Version => "1.0.0";
     public string Author => "Snow";
@@ -51,7 +51,7 @@ public sealed class NetSpeedPlugin : INotchPlugin, IDisposable
             State.PushIdle(now);
     }
 
-    /// <summary>从宿主注册表读回设置（键会自动加 Plugin.com.nps.netspeed. 前缀）。</summary>
+    /// <summary>从宿主注册表读回设置（键会自动加 Plugin.com.snow.netspeed. 前缀）。</summary>
     internal void ReadSettings(IPluginHost host)
     {
         string raw = host.GetSetting("mode", "0");

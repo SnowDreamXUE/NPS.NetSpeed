@@ -30,12 +30,12 @@
 ## 开发约束
 - 运行环境为用户本机时，**不要在用户本机执行 `dotnet build`、`dotnet test` 或其他本地编译流程，也不要还原 NuGet 包或安装 SDK**；应以源码审阅为主，并说明无法在本机验证构建。
 - 当前运行环境若是用户明确授权的远程构建平台，则应在该环境中自行检查并下载所需的 .NET SDK、宿主源码和 NuGet 依赖，完成可行的构建与验证；不得把“禁止用户本机编译”误解为“禁止远程构建”。
-- 仓库当前没有 CI 构建工作流、测试工程和预编译 DLL；不提供 `releases/` 目录，也不要声称源码已经编译过或已在宿主中运行验证。
+- 仓库当前没有 CI 构建工作流或测试工程；`releases/` 目录中的预编译 DLL 对应最近一次远程构建，不代表每次源码改动都已通过构建或测试。远程构建需要生成或更新 DLL 时，仅将经过确认的发布产物放入 `releases/`，不要提交 `bin/`、`obj/` 或临时构建缓存。
 - 改动宿主接口前，先查阅宿主对应版本的官方 API 文档和源码。不要仅凭其他 NotchPeninsula 版本的接口猜测。
 - 尽量保持插件仍以单个 `NPS.NetSpeed.dll` 分发；不要把宿主运行时已提供的依赖（如 SkiaSharp）复制进插件目录。
 - `preview.html` 是独立的样式预览，不属于编译输入，修改组件视觉时应同步更新它，但不要把它的结构当作插件渲染逻辑的依据。
 ## 项目与宿主
-- 插件 ID：`com.nps.netspeed`
+- 插件 ID：`com.snow.netspeed`
 - 当前插件版本：`1.0.0`
 - 目标框架：`net10.0-windows10.0.19041.0`
 - 插件入口：`NetSpeedPlugin`
@@ -64,6 +64,7 @@ NPS.NetSpeed/
 │   ├── Core/{NetSpeedState, NetworkSampler, SpeedFormat}.cs
 │   ├── Rendering/{SpeedPaint, PluginFont}.cs
 │   └── UI/{NetSpeedWidget, NetSpeedDetailPage}.cs
+├── releases/NPS.NetSpeed.dll         # 预编译分发产物
 └── README.md / AI_DEVELOPMENT.md / .gitignore
 ```
 ### `src/NetSpeedPlugin.cs`
@@ -89,7 +90,7 @@ NPS.NetSpeed/
 4. 切换模式会改变组件宽度：`SetMode` 必须同时调用 `InvalidateWidgetLayout()` 与 `RequestRedraw()`。
 5. `HitTest` / `OnLeftClick` 的 `x`、`y` 是相对组件 `rect` 的局部坐标；详情页命中则需映射回设计坐标。
 ## 设置键和值
-设置由宿主 `GetSetting` / `SetSetting` 保存，宿主会按插件 ID 隔离设置键（注册表路径 `HKCU\SOFTWARE\NotchPeninsula`，键名前缀 `Plugin.com.nps.netspeed.`）。
+设置由宿主 `GetSetting` / `SetSetting` 保存，宿主会按插件 ID 隔离设置键（注册表路径 `HKCU\SOFTWARE\NotchPeninsula`，键名前缀 `Plugin.com.snow.netspeed.`）。
 | 键 | 索引含义 | 当前缺省值 |
 | --- | --- | --- |
 | `mode` | `0` 并列；`1` 双行 | `0` |
@@ -109,11 +110,11 @@ NPS.NetSpeed/
 ├── NotchPeninsula/       # 与目标版本匹配的宿主源码（tag NPS-v2.1.0）
 └── NPS.NetSpeed/         # 本插件
 ```
-在授权的远程环境中，先确认或安装 .NET 10 SDK，并按上述布局检出宿主源码与 NuGet 依赖，然后进入 `NPS.NetSpeed` 目录构建。项目的 `InstallToHostPlugins` 目标会把 DLL 与 `plugin.json` 复制到宿主输出目录的 `plugins\NPS.NetSpeed\`。以下命令是构建路径的说明，**本次交付未在用户本机执行过**：
+在授权的远程环境中，先确认或安装 .NET 10 SDK，并按上述布局检出宿主源码与 NuGet 依赖，然后进入 `NPS.NetSpeed` 目录构建。项目的 `InstallToHostPlugins` 目标会把 DLL 与 `plugin.json` 复制到宿主输出目录的 `plugins\NPS.NetSpeed\`。本插件已在授权远程构建环境（.NET SDK 10.0.403、Linux）按下列命令完成编译，结果为 0 警告 0 错误：
 ```powershell
 dotnet build NPS.NetSpeed.csproj -c Release -p:EnableWindowsTargeting=true
 ```
-构建产物预期位于 `bin\Release\net10.0-windows10.0.19041.0\NPS.NetSpeed.dll`。仓库当前没有预编译 DLL，也不声称源码已经通过编译或已在宿主中运行验证。
+Windows 构建产物位于 `bin\Release\net10.0-windows10.0.19041.0\NPS.NetSpeed.dll`。构建成功并确认无误后，将产物更新到 `releases/NPS.NetSpeed.dll`，作为对应源码版本的分发产物。
 Linux/macOS 环境构建需追加 Windows RID 与目标框架开关（宿主引用 WindowsDesktop 框架，缺 `-r win-x64` 会报 NETSDK1082）：
 ```bash
 dotnet build NPS.NetSpeed.csproj -c Release -r win-x64 -p:EnableWindowsTargeting=true
