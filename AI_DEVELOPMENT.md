@@ -30,12 +30,12 @@
 ## 开发约束
 - 运行环境为用户本机时，**不要在用户本机执行 `dotnet build`、`dotnet test` 或其他本地编译流程，也不要还原 NuGet 包或安装 SDK**；应以源码审阅为主，并说明无法在本机验证构建。
 - 当前运行环境若是用户明确授权的远程构建平台，则应在该环境中自行检查并下载所需的 .NET SDK、宿主源码和 NuGet 依赖，完成可行的构建与验证；不得把“禁止用户本机编译”误解为“禁止远程构建”。
-- 仓库当前没有 CI 构建工作流、测试工程和预编译 DLL；不提供 `releases/` 目录，也不要声称源码已经编译过或已在宿主中运行验证。
+- 仓库当前没有 CI 构建工作流或测试工程；`releases/` 目录中的预编译 DLL 对应最近一次远程构建，不代表每次源码改动都已通过构建或测试。远程构建需要生成或更新 DLL 时，仅将经过确认的发布产物放入 `releases/`，不要提交 `bin/`、`obj/` 或临时构建缓存。
 - 改动宿主接口前，先查阅宿主对应版本的官方 API 文档和源码。不要仅凭其他 NotchPeninsula 版本的接口猜测。
 - 尽量保持插件仍以单个 `NPS.NetSpeed.dll` 分发；不要把宿主运行时已提供的依赖（如 SkiaSharp）复制进插件目录。
 - `preview.html` 是独立的样式预览，不属于编译输入，修改组件视觉时应同步更新它，但不要把它的结构当作插件渲染逻辑的依据。
 ## 项目与宿主
-- 插件 ID：`com.nps.netspeed`
+- 插件 ID：`com.snow.netspeed`
 - 当前插件版本：`1.0.0`
 - 目标框架：`net10.0-windows10.0.19041.0`
 - 插件入口：`NetSpeedPlugin`
@@ -64,12 +64,13 @@ NPS.NetSpeed/
 │   ├── Core/{NetSpeedState, NetworkSampler, SpeedFormat}.cs
 │   ├── Rendering/{SpeedPaint, PluginFont}.cs
 │   └── UI/{NetSpeedWidget, NetSpeedDetailPage}.cs
+├── releases/NPS.NetSpeed.dll         # 预编译分发产物
 └── README.md / AI_DEVELOPMENT.md / .gitignore
 ```
 ### `src/NetSpeedPlugin.cs`
-实现 `INotchPlugin` 和 `IDisposable`。`Initialize` 读取持久化模式、注册岛组件、用 `ScheduleRefresh(100ms, Tick)` 启动采样，并发送一次提示提醒。`Tick` 只在后台线程推进 `NetSpeedState`，不请求重绘（宿主按帧持续绘制）。`SetMode` 写入 `mode`，并调用 `InvalidateWidgetLayout()` + `RequestRedraw()` 让宿主按新模式重新测宽。`Dispose` 释放刷新句柄与采样器。
+实现 `INotchPlugin` 和 `IDisposable`。`Initialize` 读取持久化设置（模式 / 采样间隔 / 统计网卡）、注册岛组件、按所选间隔用 `ScheduleRefresh` 启动采样，并发送一次提示提醒。`Tick` 只在后台线程推进 `NetSpeedState`，并在 nic 键从未落盘时自动选中 WLAN / Wi-Fi / 无线网卡（一次成功选择即落盘，用户手动切换或已显式选择则跳过）；不请求重绘（宿主按帧持续绘制）。`SetSampleInterval` / `CycleNic` 落盘设置、应用到采样器并 Dispose 旧句柄后按新间隔重调度定时器；`SetMode` 写入 `mode`，并调用 `InvalidateWidgetLayout()` + `RequestRedraw()` 让宿主按新模式重新测宽。`Dispose` 释放刷新句柄与采样器。
 ### `src/Core/NetworkSampler.cs`
-纯 BCL 的网卡累计字节采样器。每 3 秒刷新网卡列表，只保留 `OperationalStatus.Up` 且非 `Loopback` / `Tunnel` 的网卡；每 100ms 汇总各网卡 `GetIPStatistics()` 的 IPv4 + IPv6 合计字节，用 1 秒滑动窗口（至少 400ms 跨度）计算速率。计数器回绕、网卡重连或网卡集合变化时丢弃旧窗口并重设基线，避免异常大的瞬时值。
+纯 BCL 的网卡累计字节采样器。每 3 秒刷新网卡列表，只保留 `OperationalStatus.Up` 且非 `Loopback` / `Tunnel` 的候选网卡；按当前采样间隔汇总参与统计网卡（全部候选或 `SetNicFilter` 指定的单张）`GetIPStatistics()` 的 IPv4 + IPv6 合计字节，用滑动窗口计算速率：快档为 1 秒窗口（至少 400ms 跨度），慢档窗口约 1.2 × 间隔，速率等于最近一个间隔的增量 ÷ 间隔。同时维护候选网卡 `NicInfo(Id, Name)` 快照供详情页切换。计数器回绕、网卡重连或参与统计的网卡集合变化时丢弃旧窗口并重设基线，避免异常大的瞬时值。`SetInterval` / `SetNicFilter` / `GetNicList` / `TryGetNicName` 供 UI 线程调用，内部用锁与定时器线程互斥。
 ### `src/Core/NetSpeedState.cs`
 跨线程共享的上行 / 下行状态与平滑。采样线程 `Push` / `PushIdle`，绘制线程 `Read`。上升、下降分别使用不同系数，零流量再乘衰减，保证回落不突兀；同时保留 60 个样本供详情页折线使用。`Mode` 用 `Volatile` 读写。
 ### `src/Core/SpeedFormat.cs`
@@ -81,20 +82,22 @@ NPS.NetSpeed/
 ### `src/UI/NetSpeedWidget.cs`
 实现 `IAutoWidthWidget`，负责岛上的收起态组件。只画「箭头 + 数字 + 单位」，**没有任何条形、进度或面积填充图形**。`Layout` 用固定宽度 Box 描述排版，数值变化不会重测宽度；只有切换模式时才通知宿主重新布局。并列模式两个通道左右并排，双行模式上下各占一行。左键命中返回 `toggle-mode` 并切换模式，右键保持宿主默认行为。
 ### `src/UI/NetSpeedDetailPage.cs`
-实现 `IDetailPage`，固定 360×208 设计坐标系，绘制时整体缩放并居中到当前 `rect`。包含标题、下行 / 上行大号读数、6 秒折线与「并列 / 双行」两个胶囊按钮；命中测试把 `rect` 相对坐标反算回设计坐标后判断。动作名 `mode:0` / `mode:1`。
+实现 `IDetailPage`，固定 360×234 设计坐标系，绘制时整体缩放并居中到当前 `rect`。包含标题行（标题居左、当前档位说明居右）、采样间隔五档芯片（动作 `interval:0..4`，独占标题下方一行，避免与标题重叠）、「并列 / 双行」模式胶囊、网卡切换行（动作 `nic:next`，显示当前统计网卡并在全部 / 各候选网卡间循环）、下行 / 上行大号读数与最近 60 个样本折线；命中测试把 `rect` 相对坐标反算回设计坐标后判断。
 ## 数据采集与绘制数据流
 1. 采样完全由插件负责：`NetworkInterface.GetAllNetworkInterfaces()` + `GetIPStatistics()`，不依赖宿主未公开的数据源，也不读取 `WidgetFrame.Bars`。
-2. `ScheduleRefresh` 的回调运行在宿主后台线程，最小间隔 100ms 且不叠加；回调内只更新共享状态，不做 IO 以外的绘制工作。
+2. `ScheduleRefresh` 的回调运行在宿主后台线程，最小间隔 100ms 且不叠加；切换采样间隔档位时 Dispose 旧句柄并按新间隔重新调度。回调内只更新共享状态，不做 IO 以外的绘制工作。
 3. 宿主按渲染帧调用 `Layout` / `Draw`；`Draw` 直接读当帧快照并格式化文本，不保存宿主传入的 `WidgetFrame` 或其数组。
 4. 切换模式会改变组件宽度：`SetMode` 必须同时调用 `InvalidateWidgetLayout()` 与 `RequestRedraw()`。
 5. `HitTest` / `OnLeftClick` 的 `x`、`y` 是相对组件 `rect` 的局部坐标；详情页命中则需映射回设计坐标。
 ## 设置键和值
-设置由宿主 `GetSetting` / `SetSetting` 保存，宿主会按插件 ID 隔离设置键（注册表路径 `HKCU\SOFTWARE\NotchPeninsula`，键名前缀 `Plugin.com.nps.netspeed.`）。
+设置由宿主 `GetSetting` / `SetSetting` 保存，宿主会按插件 ID 隔离设置键（注册表路径 `HKCU\SOFTWARE\NotchPeninsula`，键名前缀 `Plugin.com.snow.netspeed.`）。
 | 键 | 索引含义 | 当前缺省值 |
 | --- | --- | --- |
 | `mode` | `0` 并列；`1` 双行 | `0` |
+| `interval` | `0` 100ms；`1` 500ms；`2` 1秒；`3` 5秒；`4` 10秒 | `0` |
+| `nic` | 统计网卡 Id（Windows 下为 GUID）；空串 = 全部候选网卡。首次运行自动写入检测到的 WLAN 网卡 Id | 无（自动检测） |
 
-`ReadSettings` 会把非法值回落到 `0`。本插件**不使用** `RegisterSettingsPage`：在 `NPS-v2.1.0` 中该接口存在，但本次核对未在插件中心 / 设置界面找到消费 `SettingsPages` 的入口；模式切换改由组件左键与详情页胶囊完成。若未来宿主接通设置页，再补充 `ISettingsPage` 实现，并保持 `mode` 索引含义不变。
+`ReadSettings` 会把非法值回落到默认。本插件**不使用** `RegisterSettingsPage`：在 `NPS-v2.1.0` 中该接口存在，但本次核对未在插件中心 / 设置界面找到消费 `SettingsPages` 的入口；模式切换、采样间隔与网卡选择均由组件左键与详情页交互完成。若未来宿主接通设置页，再补充 `ISettingsPage` 实现，并保持各键的索引含义不变。
 ## 渲染资源和线程约定
 - `SKPaint`、`SKPath` 等 Skia 绘制资源在绘制方法内创建并及时释放；不要跨帧缓存这些对象。
 - 不要释放宿主借用的 `SKTypeface`；AutoWidth 文字使用 `WidgetKit.Typeface(TextWeight)`。
@@ -109,11 +112,11 @@ NPS.NetSpeed/
 ├── NotchPeninsula/       # 与目标版本匹配的宿主源码（tag NPS-v2.1.0）
 └── NPS.NetSpeed/         # 本插件
 ```
-在授权的远程环境中，先确认或安装 .NET 10 SDK，并按上述布局检出宿主源码与 NuGet 依赖，然后进入 `NPS.NetSpeed` 目录构建。项目的 `InstallToHostPlugins` 目标会把 DLL 与 `plugin.json` 复制到宿主输出目录的 `plugins\NPS.NetSpeed\`。以下命令是构建路径的说明，**本次交付未在用户本机执行过**：
+在授权的远程环境中，先确认或安装 .NET 10 SDK，并按上述布局检出宿主源码与 NuGet 依赖，然后进入 `NPS.NetSpeed` 目录构建。项目的 `InstallToHostPlugins` 目标会把 DLL 与 `plugin.json` 复制到宿主输出目录的 `plugins\NPS.NetSpeed\`。本插件已在授权远程构建环境（.NET SDK 10.0.403、Linux）按下列命令完成编译，结果为 0 警告 0 错误：
 ```powershell
 dotnet build NPS.NetSpeed.csproj -c Release -p:EnableWindowsTargeting=true
 ```
-构建产物预期位于 `bin\Release\net10.0-windows10.0.19041.0\NPS.NetSpeed.dll`。仓库当前没有预编译 DLL，也不声称源码已经通过编译或已在宿主中运行验证。
+Windows 构建产物位于 `bin\Release\net10.0-windows10.0.19041.0\NPS.NetSpeed.dll`。构建成功并确认无误后，将产物更新到 `releases/NPS.NetSpeed.dll`，作为对应源码版本的分发产物。
 Linux/macOS 环境构建需追加 Windows RID 与目标框架开关（宿主引用 WindowsDesktop 框架，缺 `-r win-x64` 会报 NETSDK1082）：
 ```bash
 dotnet build NPS.NetSpeed.csproj -c Release -r win-x64 -p:EnableWindowsTargeting=true

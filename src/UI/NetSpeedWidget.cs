@@ -37,7 +37,7 @@ internal sealed class NetSpeedWidget : IAutoWidthWidget
         _detail = new NetSpeedDetailPage(plugin);
     }
 
-    public string Id => "com.nps.netspeed.widget";
+    public string Id => "com.snow.netspeed.widget";
     public string DisplayName => "网络速度";
     public IDetailPage? DetailPage => _detail;
 
