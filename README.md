@@ -54,12 +54,10 @@ NotchPeninsula 的网络上行 / 下行速度插件，在灵动岛组件和详�
 | `src/Rendering/SpeedPaint.cs` | 主题派生配色、矢量箭头与详情页折线 |
 | `src/Rendering/PluginFont.cs` | 从宿主取得当前字体 |
 | `src/UI/NetSpeedWidget.cs` | 灵动岛上的网速组件及其 AutoWidth 布局、左键切换模式 |
-| `src/UI/NetSpeedDetailPage.cs` | 详情页读数、6 秒折线与模式胶囊交互 |
+| `src/UI/NetSpeedDetailPage.cs` | 详情页读数、最近 60 个样本折线与采样间隔 / 模式 / 网卡选择、火绒入口交互 |
 | `NPS.NetSpeed.csproj` | 目标框架、宿主项目引用和编译依赖 |
 | `plugin.json` | 目录型插件的入口清单，指定 `NPS.NetSpeed.dll` |
 | `releases/NPS.NetSpeed.dll` | 与当前版本对应的预编译产物 |
-| `assets/icon.svg` | 图标占位，不参与编译 |
-| `preview.html` | 独立样式预览，不参与编译 |
 | `AI_DEVELOPMENT.md` | 供 AI 开发工具接手时阅读的项目约定和构建说明 |
 
 参考实现中的 `VisualizerSettingsPage.cs` 在本插件中没有对应文件：`NPS-v2.1.0` 虽然保留了 `RegisterSettingsPage` 接口，但本次核对未在插件中心 / 设置界面找到消费 `SettingsPages` 的入口，模式切换改由组件左键与详情页完成。
@@ -76,9 +74,8 @@ NotchPeninsula 的网络上行 / 下行速度插件，在灵动岛组件和详�
 - `GetIPStatistics()` 的统计口径包含以普通网卡形式出现的 VPN 流量；`Tunnel` 类型网卡已排除。
 - 无线网卡驱动在休眠唤醒后重置计数器时，会丢掉一个采样窗口，表现为一帧 `0 B/s`。
 
-样式预览 `preview.html` 可双击直接打开：左右两栏分别演示并列与双行，可切换深浅主题、模拟零流量；它不参与编译，也不引用任何外部资源或网络请求。
 ## 版本记录
 - **1.1.0**：详情页新增「火绒流量监控」一键直达按钮（点击探测并启动火绒 `NetFlow.exe`，未找到时回退火绒主界面 `wsctrl.exe`，均未检测到则弹出提示）；采样间隔新增 500ms 档共五档（100ms / 500ms / 1秒 / 5秒 / 10秒）；首次运行自动默认统计 WLAN 网卡；重排详情页布局，修复标题与采样芯片重叠。
-- **1.0.0**：首个版本。对齐 NotchPeninsula 正式版 2.1.0（tag `NPS-v2.1.0`）；提供并列与双行两种数值优先的显示模式、单位自适应、零流量平滑回落与深浅主题适配；详情页支持采样间隔档位与统计网卡选择；包含独立样式预览与 AI 开发交接说明。插件 ID 定为 `com.snow.netspeed`；已在授权远程构建环境完成编译（0 警告 0 错误），预编译 DLL 位于 `releases/` 目录。
+- **1.0.0**：首个版本。对齐 NotchPeninsula 正式版 2.1.0（tag `NPS-v2.1.0`）；提供并列与双行两种数值优先的显示模式、单位自适应、零流量平滑回落与深浅主题适配；详情页支持采样间隔档位与统计网卡选择；包含 AI 开发交接说明。插件 ID 定为 `com.snow.netspeed`；已在授权远程构建环境完成编译（0 警告 0 错误），预编译 DLL 位于 `releases/` 目录。
 ## 许可
-本仓库未附许可证文件。如需开源分发，请先补充 `LICENSE` 并在此处注明。
+本项目基于 [MIT License](LICENSE) 开源，版权归 **SnowDreamXUE** 所有（2026 年）。宿主 NotchPeninsula 采用 Apache License 2.0；本插件未复制宿主源码，仅通过公开插件 API 交互，因此可以独立以 MIT 许可分发。

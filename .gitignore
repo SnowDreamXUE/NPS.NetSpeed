@@ -6,3 +6,7 @@ dist/
 .vs/
 .vscode/
 .ai-work/
+.uploads/
+.trae-html-share-packages/
+.superpowers/
+*.log

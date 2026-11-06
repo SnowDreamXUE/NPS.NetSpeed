@@ -33,7 +33,6 @@
 - 仓库当前没有 CI 构建工作流或测试工程；`releases/` 目录中的预编译 DLL 对应最近一次远程构建，不代表每次源码改动都已通过构建或测试。远程构建需要生成或更新 DLL 时，仅将经过确认的发布产物放入 `releases/`，不要提交 `bin/`、`obj/` 或临时构建缓存。
 - 改动宿主接口前，先查阅宿主对应版本的官方 API 文档和源码。不要仅凭其他 NotchPeninsula 版本的接口猜测。
 - 尽量保持插件仍以单个 `NPS.NetSpeed.dll` 分发；不要把宿主运行时已提供的依赖（如 SkiaSharp）复制进插件目录。
-- `preview.html` 是独立的样式预览，不属于编译输入，修改组件视觉时应同步更新它，但不要把它的结构当作插件渲染逻辑的依据。
 ## 项目与宿主
 - 插件 ID：`com.snow.netspeed`
 - 当前插件版本：`1.1.0`
@@ -57,8 +56,6 @@
 NPS.NetSpeed/
 ├── NPS.NetSpeed.csproj
 ├── plugin.json                       # 目录型插件入口清单
-├── preview.html                      # 独立样式预览（不参与编译）
-├── assets/icon.svg                   # 图标占位
 ├── src/
 │   ├── NetSpeedPlugin.cs
 │   ├── Core/{NetSpeedState, NetworkSampler, SpeedFormat, HuorongLauncher}.cs
