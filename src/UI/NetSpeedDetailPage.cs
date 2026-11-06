@@ -7,21 +7,41 @@ using SkiaSharp;
 namespace NPS.NetSpeed.UI;
 
 /// <summary>
-/// 右键展开的详情页：大号数值 + 6 秒曲线 + 模式切换。
+/// 右键展开的详情页：采样间隔 / 模式 / 网卡选择 + 大号数值 + 6 秒曲线。
 /// 排版永远按 <see cref="MeasureWidth"/> / <see cref="MeasureHeight"/> 的目标尺寸算，
 /// 再把整块内容缩放平移进当前 rect（宿主展开动画期间 rect 是插值尺寸）。
 /// </summary>
 internal sealed class NetSpeedDetailPage : IDetailPage
 {
     private const float LayoutW = 360f;
-    private const float LayoutH = 208f;
+    private const float LayoutH = 234f;
 
     private const float PaddingX = 18f;
 
     private const float ChipY = 14f;
     private const float ChipH = 26f;
+    private const float IntervalChipW = 46f;
+    private const float IntervalChipGap = 4f;
+
+    // 采样间隔 4 档芯片：100ms / 1秒 / 5秒 / 10秒，排在模式芯片左侧
+    private static readonly SKRect[] IntervalChips =
+    {
+        new(PaddingX, ChipY, PaddingX + IntervalChipW, ChipY + ChipH),
+        new(PaddingX + (IntervalChipW + IntervalChipGap), ChipY,
+            PaddingX + IntervalChipW * 2 + IntervalChipGap, ChipY + ChipH),
+        new(PaddingX + (IntervalChipW + IntervalChipGap) * 2, ChipY,
+            PaddingX + IntervalChipW * 3 + IntervalChipGap * 2, ChipY + ChipH),
+        new(PaddingX + (IntervalChipW + IntervalChipGap) * 3, ChipY,
+            PaddingX + IntervalChipW * 4 + IntervalChipGap * 3, ChipY + ChipH),
+    };
+
     private static readonly SKRect SideChip = new(234f, ChipY, 290f, ChipY + ChipH);
     private static readonly SKRect RowChip = new(296f, ChipY, 352f, ChipY + ChipH);
+
+    // 网卡选择行：显示当前统计网卡，点击循环切换「全部 → 各候选网卡 → 全部」
+    private static readonly SKRect NicRow = new(PaddingX, 64f, LayoutW - PaddingX, 88f);
+    private const float NicValueX = 52f;        // 网卡名起始 x
+    private const float NicValueMaxRight = 270f; // 网卡名可用宽度右界（右侧留给「点击切换」提示）
 
     private readonly NetSpeedPlugin _plugin;
     private readonly float[] _downSamples = new float[NetSpeedState.HistoryCapacity];
@@ -69,24 +89,57 @@ internal sealed class NetSpeedDetailPage : IDetailPage
         }
         using (var caption = MakePaint(9.2f, sub, false))
         {
-            canvas.DrawText("实时 · 100ms 采样 · 1s 滑动窗口", PaddingX, 47f, caption);
+            canvas.DrawText($"实时 · {NetSpeedPlugin.IntervalLabels[_plugin.IntervalIndex]} 采样", PaddingX, 47f, caption);
         }
 
         var mode = _plugin.State.Mode;
+        var labels = NetSpeedPlugin.IntervalLabels;
+        for (int i = 0; i < labels.Length; i++)
+            DrawChip(canvas, IntervalChips[i], labels[i], _plugin.IntervalIndex == i, downAccent, faint, sub, alpha);
         DrawChip(canvas, SideChip, "并列", mode == SpeedMode.SideBySide, downAccent, faint, sub, alpha);
         DrawChip(canvas, RowChip, "双行", mode == SpeedMode.DualRow, downAccent, faint, sub, alpha);
 
+        DrawNicRow(canvas, text, sub, faint, alpha);
+
         using (var rule = new SKPaint { IsAntialias = true, Color = divider })
         {
-            canvas.DrawRect(PaddingX, 56f, LayoutW - PaddingX * 2f, 0.8f, rule);
+            canvas.DrawRect(PaddingX, 96f, LayoutW - PaddingX * 2f, 0.8f, rule);
         }
 
-        DrawMetric(canvas, 66f, true, snapshot.DownBps, downAccent, text, sub, frame, count);
-        DrawMetric(canvas, 122f, false, snapshot.UpBps, upAccent, text, sub, frame, count);
+        DrawMetric(canvas, 104f, true, snapshot.DownBps, downAccent, text, sub, frame, count);
+        DrawMetric(canvas, 158f, false, snapshot.UpBps, upAccent, text, sub, frame, count);
 
         using (var hint = MakePaint(9f, sub, false))
         {
-            canvas.DrawText("左键点击岛上组件可快速切换 · 右键展开 / 收起", PaddingX, 200f, hint);
+            canvas.DrawText("左键点击岛上组件可快速切换 · 右键展开 / 收起", PaddingX, 222f, hint);
+        }
+    }
+
+    /// <summary>网卡选择行：浅色圆角条，左侧固定「网卡」，中间当前网卡名（超宽截断），右侧切换提示。</summary>
+    private void DrawNicRow(SKCanvas canvas, SKColor text, SKColor sub, SKColor faint, byte alpha)
+    {
+        using (var fill = new SKPaint { IsAntialias = true, Color = faint })
+        {
+            canvas.DrawRoundRect(NicRow, 8f, 8f, fill);
+        }
+
+        using (var label = MakePaint(10.5f, sub, false))
+        {
+            canvas.DrawText("网卡", NicRow.Left + 10f, NicRow.MidY + 3.6f, label);
+        }
+
+        using (var value = MakePaint(10.5f, text, true))
+        {
+            canvas.Save();
+            canvas.ClipRect(SKRect.Create(NicValueX, NicRow.Top, NicValueMaxRight - NicValueX, NicRow.Height));
+            canvas.DrawText(_plugin.NicLabel, NicValueX, NicRow.MidY + 3.6f, value);
+            canvas.Restore();
+        }
+
+        using (var tip = MakePaint(9f, sub, false))
+        {
+            tip.TextAlign = SKTextAlign.Right;
+            canvas.DrawText("点击切换 ▸", NicRow.Right - 10f, NicRow.MidY + 3.8f, tip);
         }
     }
 
@@ -100,12 +153,12 @@ internal sealed class NetSpeedDetailPage : IDetailPage
 
         using (var label = MakePaint(10.5f, accent, true))
         {
-            canvas.DrawText(down ? "↓ 下行" : "↑ 上行", PaddingX, top + 16f, label);
+            canvas.DrawText(down ? "↓ 下行" : "↑ 上行", PaddingX, top + 14f, label);
         }
 
         using (var numberPaint = MakePaint(22f, text, true))
         {
-            float baseline = top + 47f;
+            float baseline = top + 45f;
             canvas.DrawText(number, PaddingX, baseline, numberPaint);
             float numberWidth = numberPaint.MeasureText(number);
 
@@ -114,7 +167,7 @@ internal sealed class NetSpeedDetailPage : IDetailPage
         }
 
         var samples = down ? _downSamples : _upSamples;
-        var area = new SKRect(152f, top + 4f, LayoutW - PaddingX, top + 50f);
+        var area = new SKRect(152f, top + 4f, LayoutW - PaddingX, top + 48f);
         SpeedPaint.DrawSparkline(canvas, area, samples, count, accent,
             frame.Theme.SubTextColor.WithAlpha((byte)(frame.Alpha * 0.18f)));
     }
@@ -159,8 +212,13 @@ internal sealed class NetSpeedDetailPage : IDetailPage
         float lx = (x - rect.Width * 0.5f) / scale + LayoutW * 0.5f;
         float ly = (y - rect.Height * 0.5f) / scale + LayoutH * 0.5f;
 
+        for (int i = 0; i < IntervalChips.Length; i++)
+        {
+            if (HitChip(IntervalChips[i], lx, ly)) return new WidgetHit($"interval:{i}");
+        }
         if (HitChip(SideChip, lx, ly)) return new WidgetHit("mode:0");
         if (HitChip(RowChip, lx, ly)) return new WidgetHit("mode:1");
+        if (HitChip(NicRow, lx, ly)) return new WidgetHit("nic:next");
         return WidgetHit.None;
     }
 
@@ -169,6 +227,17 @@ internal sealed class NetSpeedDetailPage : IDetailPage
 
     public void OnAction(string? action, float x, float y)
     {
+        if (action is not null && action.StartsWith("interval:", StringComparison.Ordinal))
+        {
+            if (int.TryParse(action.AsSpan("interval:".Length), out int index))
+                _plugin.SetSampleInterval(index);
+            return;
+        }
+        if (action == "nic:next")
+        {
+            _plugin.CycleNic();
+            return;
+        }
         if (action == "mode:0") _plugin.SetMode(SpeedMode.SideBySide);
         else if (action == "mode:1") _plugin.SetMode(SpeedMode.DualRow);
     }
