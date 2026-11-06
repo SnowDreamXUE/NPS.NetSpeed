@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- 必须与宿主 NPS-v2.1.0 完全一致，否则插件加载会落到 BadImage / HostMismatch -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Library</OutputType>
+    <AssemblyName>NPS.NetSpeed</AssemblyName>
+    <RootNamespace>NPS.NetSpeed</RootNamespace>
+    <Version>1.0.0</Version>
+    <Authors>Snow</Authors>
+    <!-- 允许在非 Windows 系统上编译 Windows 目标框架（Windows 下无影响） -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 引用主程序工程，拿到 INotchPlugin / IPluginHost / IWidget / IAutoWidthWidget / WidgetKit / WidgetFrame。
+         Private=false：宿主的 NotchPeninsula.dll 已在用户机器上，不随插件拷贝。
+         布局约定：本插件目录与克隆下来的 NotchPeninsula 仓库目录平级
+         （不要放进宿主仓库目录里 —— 宿主工程默认通配 **\*.cs，会把插件源码也编进去）。 -->
+    <ProjectReference Include="..\NotchPeninsula\NotchPeninsula.csproj" Private="false" />
+    <!-- SkiaSharp 仅作编译引用；运行时由宿主进程提供，不随插件分发 -->
+    <PackageReference Include="SkiaSharp" Version="2.88.8" ExcludeAssets="runtime" />
+  </ItemGroup>
+  <!-- 编译后自动把 dll + plugin.json 复制到主程序输出目录的 plugins\NPS.NetSpeed\，省得手动搬 -->
+  <Target Name="InstallToHostPlugins" AfterTargets="Build">
+    <PropertyGroup>
+      <HostPluginDir>$(MSBuildThisFileDirectory)..\NotchPeninsula\bin\$(Configuration)\$(TargetFramework)\plugins\NPS.NetSpeed</HostPluginDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(HostPluginDir)" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll"
+          DestinationFolder="$(HostPluginDir)"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)plugin.json"
+          DestinationFolder="$(HostPluginDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(MSBuildThisFileDirectory)plugin.json')" />
+  </Target>
+</Project>
