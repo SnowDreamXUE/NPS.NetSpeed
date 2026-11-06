@@ -23,6 +23,8 @@ internal sealed class NetworkSampler
     private const long FastMinSpanMs = 400;        // 快档窗口内至少要有的跨度
     private const long InterfaceRefreshMs = 3000;  // 网卡列表刷新周期（插拔网卡 / VPN 启停）
 
+    private static readonly string[] WlanKeywords = { "WLAN", "Wi-Fi", "Wireless", "无线" };
+
     private readonly record struct Sample(long Ms, long Rx, long Tx);
 
     private readonly object _gate = new();
@@ -104,6 +106,29 @@ internal sealed class NetworkSampler
                 }
             }
         }
+        name = "";
+        return false;
+    }
+
+    /// <summary>候选网卡里找无线网卡（名称含 WLAN / Wi-Fi / Wireless / 无线），供插件首次运行时默认选中。</summary>
+    public bool TryFindWlanNic(out string id, out string name)
+    {
+        lock (_gate)
+        {
+            foreach (var nic in _nicList)
+            {
+                foreach (string keyword in WlanKeywords)
+                {
+                    if (nic.Name.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        id = nic.Id;
+                        name = nic.Name;
+                        return true;
+                    }
+                }
+            }
+        }
+        id = "";
         name = "";
         return false;
     }

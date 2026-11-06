@@ -68,7 +68,7 @@ NPS.NetSpeed/
 └── README.md / AI_DEVELOPMENT.md / .gitignore
 ```
 ### `src/NetSpeedPlugin.cs`
-实现 `INotchPlugin` 和 `IDisposable`。`Initialize` 读取持久化设置（模式 / 采样间隔 / 统计网卡）、注册岛组件、按所选间隔用 `ScheduleRefresh` 启动采样，并发送一次提示提醒。`Tick` 只在后台线程推进 `NetSpeedState`，不请求重绘（宿主按帧持续绘制）。`SetSampleInterval` / `CycleNic` 落盘设置、应用到采样器并 Dispose 旧句柄后按新间隔重调度定时器；`SetMode` 写入 `mode`，并调用 `InvalidateWidgetLayout()` + `RequestRedraw()` 让宿主按新模式重新测宽。`Dispose` 释放刷新句柄与采样器。
+实现 `INotchPlugin` 和 `IDisposable`。`Initialize` 读取持久化设置（模式 / 采样间隔 / 统计网卡）、注册岛组件、按所选间隔用 `ScheduleRefresh` 启动采样，并发送一次提示提醒。`Tick` 只在后台线程推进 `NetSpeedState`，并在 nic 键从未落盘时自动选中 WLAN / Wi-Fi / 无线网卡（一次成功选择即落盘，用户手动切换或已显式选择则跳过）；不请求重绘（宿主按帧持续绘制）。`SetSampleInterval` / `CycleNic` 落盘设置、应用到采样器并 Dispose 旧句柄后按新间隔重调度定时器；`SetMode` 写入 `mode`，并调用 `InvalidateWidgetLayout()` + `RequestRedraw()` 让宿主按新模式重新测宽。`Dispose` 释放刷新句柄与采样器。
 ### `src/Core/NetworkSampler.cs`
 纯 BCL 的网卡累计字节采样器。每 3 秒刷新网卡列表，只保留 `OperationalStatus.Up` 且非 `Loopback` / `Tunnel` 的候选网卡；按当前采样间隔汇总参与统计网卡（全部候选或 `SetNicFilter` 指定的单张）`GetIPStatistics()` 的 IPv4 + IPv6 合计字节，用滑动窗口计算速率：快档为 1 秒窗口（至少 400ms 跨度），慢档窗口约 1.2 × 间隔，速率等于最近一个间隔的增量 ÷ 间隔。同时维护候选网卡 `NicInfo(Id, Name)` 快照供详情页切换。计数器回绕、网卡重连或参与统计的网卡集合变化时丢弃旧窗口并重设基线，避免异常大的瞬时值。`SetInterval` / `SetNicFilter` / `GetNicList` / `TryGetNicName` 供 UI 线程调用，内部用锁与定时器线程互斥。
 ### `src/Core/NetSpeedState.cs`
@@ -82,7 +82,7 @@ NPS.NetSpeed/
 ### `src/UI/NetSpeedWidget.cs`
 实现 `IAutoWidthWidget`，负责岛上的收起态组件。只画「箭头 + 数字 + 单位」，**没有任何条形、进度或面积填充图形**。`Layout` 用固定宽度 Box 描述排版，数值变化不会重测宽度；只有切换模式时才通知宿主重新布局。并列模式两个通道左右并排，双行模式上下各占一行。左键命中返回 `toggle-mode` 并切换模式，右键保持宿主默认行为。
 ### `src/UI/NetSpeedDetailPage.cs`
-实现 `IDetailPage`，固定 360×234 设计坐标系，绘制时整体缩放并居中到当前 `rect`。包含标题、采样间隔四档芯片（动作 `interval:0..3`）、「并列 / 双行」模式胶囊、网卡切换行（动作 `nic:next`，显示当前统计网卡并在全部 / 各候选网卡间循环）、下行 / 上行大号读数与最近 60 个样本折线；命中测试把 `rect` 相对坐标反算回设计坐标后判断。
+实现 `IDetailPage`，固定 360×234 设计坐标系，绘制时整体缩放并居中到当前 `rect`。包含标题行（标题居左、当前档位说明居右）、采样间隔五档芯片（动作 `interval:0..4`，独占标题下方一行，避免与标题重叠）、「并列 / 双行」模式胶囊、网卡切换行（动作 `nic:next`，显示当前统计网卡并在全部 / 各候选网卡间循环）、下行 / 上行大号读数与最近 60 个样本折线；命中测试把 `rect` 相对坐标反算回设计坐标后判断。
 ## 数据采集与绘制数据流
 1. 采样完全由插件负责：`NetworkInterface.GetAllNetworkInterfaces()` + `GetIPStatistics()`，不依赖宿主未公开的数据源，也不读取 `WidgetFrame.Bars`。
 2. `ScheduleRefresh` 的回调运行在宿主后台线程，最小间隔 100ms 且不叠加；切换采样间隔档位时 Dispose 旧句柄并按新间隔重新调度。回调内只更新共享状态，不做 IO 以外的绘制工作。
@@ -94,8 +94,8 @@ NPS.NetSpeed/
 | 键 | 索引含义 | 当前缺省值 |
 | --- | --- | --- |
 | `mode` | `0` 并列；`1` 双行 | `0` |
-| `interval` | `0` 100ms；`1` 1秒；`2` 5秒；`3` 10秒 | `0` |
-| `nic` | 统计网卡 Id（Windows 下为 GUID）；空串 = 全部候选网卡 | 空 |
+| `interval` | `0` 100ms；`1` 500ms；`2` 1秒；`3` 5秒；`4` 10秒 | `0` |
+| `nic` | 统计网卡 Id（Windows 下为 GUID）；空串 = 全部候选网卡。首次运行自动写入检测到的 WLAN 网卡 Id | 无（自动检测） |
 
 `ReadSettings` 会把非法值回落到默认。本插件**不使用** `RegisterSettingsPage`：在 `NPS-v2.1.0` 中该接口存在，但本次核对未在插件中心 / 设置界面找到消费 `SettingsPages` 的入口；模式切换、采样间隔与网卡选择均由组件左键与详情页交互完成。若未来宿主接通设置页，再补充 `ISettingsPage` 实现，并保持各键的索引含义不变。
 ## 渲染资源和线程约定

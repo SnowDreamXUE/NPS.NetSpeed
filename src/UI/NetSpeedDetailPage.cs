@@ -18,28 +18,31 @@ internal sealed class NetSpeedDetailPage : IDetailPage
 
     private const float PaddingX = 18f;
 
-    private const float ChipY = 14f;
+    // 芯片行在标题下方独占一行（y40），避免与左上角标题「网络速度」重叠
+    private const float ChipY = 40f;
     private const float ChipH = 26f;
-    private const float IntervalChipW = 46f;
-    private const float IntervalChipGap = 4f;
+    private const float IntervalChipW = 40f;
+    private const float IntervalChipGap = 3f;
 
-    // 采样间隔 4 档芯片：100ms / 1秒 / 5秒 / 10秒，排在模式芯片左侧
-    private static readonly SKRect[] IntervalChips =
+    // 采样间隔 5 档芯片：100ms / 500ms / 1秒 / 5秒 / 10秒，排在模式芯片左侧
+    private static readonly SKRect[] IntervalChips = BuildIntervalChips();
+
+    private static SKRect[] BuildIntervalChips()
     {
-        new(PaddingX, ChipY, PaddingX + IntervalChipW, ChipY + ChipH),
-        new(PaddingX + (IntervalChipW + IntervalChipGap), ChipY,
-            PaddingX + IntervalChipW * 2 + IntervalChipGap, ChipY + ChipH),
-        new(PaddingX + (IntervalChipW + IntervalChipGap) * 2, ChipY,
-            PaddingX + IntervalChipW * 3 + IntervalChipGap * 2, ChipY + ChipH),
-        new(PaddingX + (IntervalChipW + IntervalChipGap) * 3, ChipY,
-            PaddingX + IntervalChipW * 4 + IntervalChipGap * 3, ChipY + ChipH),
-    };
+        var rects = new SKRect[NetSpeedPlugin.IntervalLabels.Length];
+        for (int i = 0; i < rects.Length; i++)
+        {
+            float left = PaddingX + i * (IntervalChipW + IntervalChipGap);
+            rects[i] = new SKRect(left, ChipY, left + IntervalChipW, ChipY + ChipH);
+        }
+        return rects;
+    }
 
-    private static readonly SKRect SideChip = new(234f, ChipY, 290f, ChipY + ChipH);
-    private static readonly SKRect RowChip = new(296f, ChipY, 352f, ChipY + ChipH);
+    private static readonly SKRect SideChip = new(244f, ChipY, 296f, ChipY + ChipH);
+    private static readonly SKRect RowChip = new(300f, ChipY, 352f, ChipY + ChipH);
 
     // 网卡选择行：显示当前统计网卡，点击循环切换「全部 → 各候选网卡 → 全部」
-    private static readonly SKRect NicRow = new(PaddingX, 64f, LayoutW - PaddingX, 88f);
+    private static readonly SKRect NicRow = new(PaddingX, 74f, LayoutW - PaddingX, 98f);
     private const float NicValueX = 52f;        // 网卡名起始 x
     private const float NicValueMaxRight = 270f; // 网卡名可用宽度右界（右侧留给「点击切换」提示）
 
@@ -89,7 +92,8 @@ internal sealed class NetSpeedDetailPage : IDetailPage
         }
         using (var caption = MakePaint(9.2f, sub, false))
         {
-            canvas.DrawText($"实时 · {NetSpeedPlugin.IntervalLabels[_plugin.IntervalIndex]} 采样", PaddingX, 47f, caption);
+            caption.TextAlign = SKTextAlign.Right;
+            canvas.DrawText($"实时 · {NetSpeedPlugin.IntervalLabels[_plugin.IntervalIndex]} 采样", LayoutW - PaddingX, 30f, caption);
         }
 
         var mode = _plugin.State.Mode;
@@ -103,15 +107,15 @@ internal sealed class NetSpeedDetailPage : IDetailPage
 
         using (var rule = new SKPaint { IsAntialias = true, Color = divider })
         {
-            canvas.DrawRect(PaddingX, 96f, LayoutW - PaddingX * 2f, 0.8f, rule);
+            canvas.DrawRect(PaddingX, 106f, LayoutW - PaddingX * 2f, 0.8f, rule);
         }
 
-        DrawMetric(canvas, 104f, true, snapshot.DownBps, downAccent, text, sub, frame, count);
-        DrawMetric(canvas, 158f, false, snapshot.UpBps, upAccent, text, sub, frame, count);
+        DrawMetric(canvas, 112f, true, snapshot.DownBps, downAccent, text, sub, frame, count);
+        DrawMetric(canvas, 164f, false, snapshot.UpBps, upAccent, text, sub, frame, count);
 
         using (var hint = MakePaint(9f, sub, false))
         {
-            canvas.DrawText("左键点击岛上组件可快速切换 · 右键展开 / 收起", PaddingX, 222f, hint);
+            canvas.DrawText("左键点击岛上组件可快速切换 · 右键展开 / 收起", PaddingX, 224f, hint);
         }
     }
 

@@ -11,9 +11,12 @@ namespace NPS.NetSpeed;
 public sealed class NetSpeedPlugin : INotchPlugin, IDisposable
 {
     /// <summary>采样间隔档位显示名（与 <see cref="IntervalMsValues"/> 一一对应）。</summary>
-    internal static readonly string[] IntervalLabels = { "100ms", "1秒", "5秒", "10秒" };
-    private static readonly long[] IntervalMsValues = { 100, 1000, 5000, 10000 };
+    internal static readonly string[] IntervalLabels = { "100ms", "500ms", "1秒", "5秒", "10秒" };
+    private static readonly long[] IntervalMsValues = { 100, 500, 1000, 5000, 10000 };
     internal const string AllNicLabel = "全部网卡";
+
+    /// <summary>GetSetting 哨兵值：nic 键从未落盘时返回它，用于区分「用户显式选了全部」。</summary>
+    private const string NicUnsetSentinel = "\u0000unset";
 
     internal readonly NetSpeedState State = new();
 
@@ -24,6 +27,10 @@ public sealed class NetSpeedPlugin : INotchPlugin, IDisposable
     private int _intervalIndex;
     private string _nicId = "";     // 选中的网卡 Id；空串 = 全部
     private string _nicName = "";   // 选中网卡的显示名缓存（网卡拔出后仍可显示）
+    // 首次运行且用户从未选择过网卡时，自动选中的 WLAN 网卡（与火绒等监控的统计口径对齐）。
+    // _nicId / _nicName / _nicAutoPending 会在定时器线程（自动选择）与 UI 线程（点击切换）间
+    // 交叉读写：string / bool 赋值在 .NET 中原子且竞态后果只是晚一帧显示，无需加锁。
+    private bool _nicAutoPending;
 
     public string Id => "com.snow.netspeed";
     public string DisplayName => "网络速度";
@@ -65,11 +72,29 @@ public sealed class NetSpeedPlugin : INotchPlugin, IDisposable
     /// <summary>定时器回调：采样 → 平滑写入状态。宿主按渲染帧持续重绘，无需主动请求刷新。</summary>
     private void Tick()
     {
+        TryAutoSelectWlan();
+
         long now = Environment.TickCount64;
         if (_sampler.TrySample(now, out double downBps, out double upBps))
             State.Push(now, downBps, upBps);
         else
             State.PushIdle(now);
+    }
+
+    /// <summary>
+    /// 首次运行（nic 键从未落盘）时自动选中候选网卡里的 WLAN / Wi-Fi / 无线网卡，
+    /// 与火绒等安全软件默认监控的网卡对齐；没等到就一直等，用户手动切换即取消。
+    /// </summary>
+    private void TryAutoSelectWlan()
+    {
+        if (!_nicAutoPending) return;
+        if (!_sampler.TryFindWlanNic(out string id, out string name)) return;
+
+        _nicAutoPending = false;
+        _nicId = id;
+        _nicName = name;
+        try { _host?.SetSetting("nic", id); } catch { }
+        ApplySamplerConfig();
     }
 
     /// <summary>
@@ -81,7 +106,12 @@ public sealed class NetSpeedPlugin : INotchPlugin, IDisposable
         _host ??= host;
 
         int interval = ParseIndex(host.GetSetting("interval", "0"), 0);
-        _nicId = host.GetSetting("nic", "") ?? "";
+
+        // 哨兵值区分「nic 键从未落盘」与「用户显式选了全部」：前者允许自动选 WLAN，后者尊重用户
+        string rawNic = host.GetSetting("nic", NicUnsetSentinel);
+        bool nicNeverSet = rawNic == NicUnsetSentinel;
+        _nicId = nicNeverSet ? "" : rawNic;
+        _nicAutoPending = nicNeverSet;
 
         State.Mode = host.GetSetting("mode", "0") == "1" ? SpeedMode.DualRow : SpeedMode.SideBySide;
 
@@ -125,6 +155,7 @@ public sealed class NetSpeedPlugin : INotchPlugin, IDisposable
     /// <summary>循环切换统计网卡：全部 → 依次每个候选网卡 → 全部；落盘并立即重绘。</summary>
     internal void CycleNic()
     {
+        _nicAutoPending = false; // 用户手动选择即取消 WLAN 自动选择
         var list = _sampler.GetNicList();
         if (list.Count == 0) return;
 
