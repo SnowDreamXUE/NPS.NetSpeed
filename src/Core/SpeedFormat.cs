@@ -5,7 +5,8 @@ namespace NPS.NetSpeed.Core;
 
 /// <summary>
 /// 数值 → 「数字 + 单位」的拆分格式化。
-/// 单位带 15% 回差：速度在 1 KB/s 附近抖动时不会每帧在 “B/s / KB/s” 之间来回跳。
+/// 当前单位数值 ≥ 1024 即升单位（与任务管理器等常规习惯一致），< 0.85 才降单位
+/// （等价于上一单位数值 < 870.4）：单位边界下方留 15% 回差，速度在边界抖动时不会每帧来回跳。
 /// </summary>
 internal static class SpeedFormat
 {
@@ -13,8 +14,9 @@ internal static class SpeedFormat
 
     private static readonly string[] UnitNames = { "B/s", "KB/s", "MB/s", "GB/s" };
     private const double Base = 1024.0;
-    private const double UpThreshold = Base * 1.15;
-    private const double DownThreshold = Base * 0.85;
+    // 阈值与 scaled（当前单位下的数值）同量纲：升单位 1024（到边界即升）、降单位 0.85。
+    private const double UpThreshold = Base;
+    private const double DownThreshold = 0.85;
 
     public static void Format(double bps, ref int unitIndex, out string number, out string unit)
     {
