@@ -188,6 +188,27 @@ public sealed class NetSpeedPlugin : INotchPlugin, IDisposable
         try { _host?.RequestRedraw(); } catch { }
     }
 
+    /// <summary>打开火绒流量监控：优先 NetFlow.exe 直达，回退主界面 wsctrl.exe；都找不到则提示。</summary>
+    internal void OpenHuorongMonitor()
+    {
+        HuorongTarget? target = null;
+        try { target = HuorongLauncher.Resolve(); } catch { }
+
+        bool started = target is { } t && HuorongLauncher.TryStart(t.ExePath);
+        if (!started)
+        {
+            try
+            {
+                _host?.PostReminder(new ReminderData
+                {
+                    Title = "无法打开火绒流量监控",
+                    Body = "未检测到火绒安全软件（NetFlow.exe / wsctrl.exe），请确认火绒已安装",
+                });
+            }
+            catch { }
+        }
+    }
+
     public void Dispose()
     {
         _timer?.Dispose();
