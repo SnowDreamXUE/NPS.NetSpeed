@@ -36,7 +36,7 @@
 - `preview.html` 是独立的样式预览，不属于编译输入，修改组件视觉时应同步更新它，但不要把它的结构当作插件渲染逻辑的依据。
 ## 项目与宿主
 - 插件 ID：`com.snow.netspeed`
-- 当前插件版本：`1.0.0`
+- 当前插件版本：`1.1.0`
 - 目标框架：`net10.0-windows10.0.19041.0`
 - 插件入口：`NetSpeedPlugin`
 - 宿主 API 命名空间：`NotchPeninsula.Plugins`
@@ -61,7 +61,7 @@ NPS.NetSpeed/
 ├── assets/icon.svg                   # 图标占位
 ├── src/
 │   ├── NetSpeedPlugin.cs
-│   ├── Core/{NetSpeedState, NetworkSampler, SpeedFormat}.cs
+│   ├── Core/{NetSpeedState, NetworkSampler, SpeedFormat, HuorongLauncher}.cs
 │   ├── Rendering/{SpeedPaint, PluginFont}.cs
 │   └── UI/{NetSpeedWidget, NetSpeedDetailPage}.cs
 ├── releases/NPS.NetSpeed.dll         # 预编译分发产物
@@ -82,7 +82,10 @@ NPS.NetSpeed/
 ### `src/UI/NetSpeedWidget.cs`
 实现 `IAutoWidthWidget`，负责岛上的收起态组件。只画「箭头 + 数字 + 单位」，**没有任何条形、进度或面积填充图形**。`Layout` 用固定宽度 Box 描述排版，数值变化不会重测宽度；只有切换模式时才通知宿主重新布局。并列模式两个通道左右并排，双行模式上下各占一行。左键命中返回 `toggle-mode` 并切换模式，右键保持宿主默认行为。
 ### `src/UI/NetSpeedDetailPage.cs`
-实现 `IDetailPage`，固定 360×234 设计坐标系，绘制时整体缩放并居中到当前 `rect`。包含标题行（标题居左、当前档位说明居右）、采样间隔五档芯片（动作 `interval:0..4`，独占标题下方一行，避免与标题重叠）、「并列 / 双行」模式胶囊、网卡切换行（动作 `nic:next`，显示当前统计网卡并在全部 / 各候选网卡间循环）、下行 / 上行大号读数与最近 60 个样本折线；命中测试把 `rect` 相对坐标反算回设计坐标后判断。
+实现 `IDetailPage`，固定 360×262 设计坐标系，绘制时整体缩放并居中到当前 `rect`。包含标题行（标题居左、当前档位说明居右）、采样间隔五档芯片（动作 `interval:0..4`，独占标题下方一行，避免与标题重叠）、「并列 / 双行」模式胶囊、网卡切换行（动作 `nic:next`，显示当前统计网卡并在全部 / 各候选网卡间循环）、火绒流量监控行（动作 `open:netflow`，调用 `HuorongLauncher` 启动 `NetFlow.exe`，回退主界面 `wsctrl.exe`，均未检测到时由插件 `PostReminder` 提示）、下行 / 上行大号读数与最近 60 个样本折线；命中测试把 `rect` 相对坐标反算回设计坐标后判断。
+
+### `src/Core/HuorongLauncher.cs`
+静态工具类，定位并启动火绒流量监控。探测顺序：注册表配置键 `HKLM\SOFTWARE\Huorong\Sysdiag`（含 WOW6432Node）→ 卸载表 DisplayName 含「火绒 / Huorong」条目的 InstallLocation → `HipsDaemon` 服务 ImagePath → 默认 ProgramFiles 路径；候选根目录下先找 `bin\NetFlow.exe`（官方确认可直接吊起流量监控窗口），再找 `bin\wsctrl.exe` 作主界面回退。只在按钮点击时执行（注册表读取微秒级，无需缓存）；启动用 `Process.Start(UseShellExecute = true)`，失败或未检测到返回 false 由插件提示。
 ## 数据采集与绘制数据流
 1. 采样完全由插件负责：`NetworkInterface.GetAllNetworkInterfaces()` + `GetIPStatistics()`，不依赖宿主未公开的数据源，也不读取 `WidgetFrame.Bars`。
 2. `ScheduleRefresh` 的回调运行在宿主后台线程，最小间隔 100ms 且不叠加；切换采样间隔档位时 Dispose 旧句柄并按新间隔重新调度。回调内只更新共享状态，不做 IO 以外的绘制工作。

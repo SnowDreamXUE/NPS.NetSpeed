@@ -7,7 +7,7 @@
     <OutputType>Library</OutputType>
     <AssemblyName>NPS.NetSpeed</AssemblyName>
     <RootNamespace>NPS.NetSpeed</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Snow</Authors>
     <!-- 允许在非 Windows 系统上编译 Windows 目标框架（Windows 下无影响） -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
