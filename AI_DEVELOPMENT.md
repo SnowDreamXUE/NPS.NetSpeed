@@ -35,7 +35,7 @@
 - 尽量保持插件仍以单个 `NPS.NetSpeed.dll` 分发；不要把宿主运行时已提供的依赖（如 SkiaSharp）复制进插件目录。
 ## 项目与宿主
 - 插件 ID：`com.snow.netspeed`
-- 当前插件版本：`1.1.0`
+- 当前插件版本：`1.1.2`
 - 目标框架：`net10.0-windows10.0.19041.0`
 - 插件入口：`NetSpeedPlugin`
 - 宿主 API 命名空间：`NotchPeninsula.Plugins`
@@ -67,7 +67,7 @@ NPS.NetSpeed/
 ### `src/NetSpeedPlugin.cs`
 实现 `INotchPlugin` 和 `IDisposable`。`Initialize` 读取持久化设置（模式 / 采样间隔 / 统计网卡）、注册岛组件、按所选间隔用 `ScheduleRefresh` 启动采样，并发送一次提示提醒。`Tick` 只在后台线程推进 `NetSpeedState`，并在 nic 键从未落盘时自动选中 WLAN / Wi-Fi / 无线网卡（一次成功选择即落盘，用户手动切换或已显式选择则跳过）；不请求重绘（宿主按帧持续绘制）。`SetSampleInterval` / `CycleNic` 落盘设置、应用到采样器并 Dispose 旧句柄后按新间隔重调度定时器；`SetMode` 写入 `mode`，并调用 `InvalidateWidgetLayout()` + `RequestRedraw()` 让宿主按新模式重新测宽。`Dispose` 释放刷新句柄与采样器。
 ### `src/Core/NetworkSampler.cs`
-纯 BCL 的网卡累计字节采样器。每 3 秒刷新网卡列表，只保留 `OperationalStatus.Up` 且非 `Loopback` / `Tunnel` 的候选网卡；按当前采样间隔汇总参与统计网卡（全部候选或 `SetNicFilter` 指定的单张）`GetIPStatistics()` 的 IPv4 + IPv6 合计字节，用滑动窗口计算速率：快档为 1 秒窗口（至少 400ms 跨度），慢档窗口约 1.2 × 间隔，速率等于最近一个间隔的增量 ÷ 间隔。同时维护候选网卡 `NicInfo(Id, Name)` 快照供详情页切换。计数器回绕、网卡重连或参与统计的网卡集合变化时丢弃旧窗口并重设基线，避免异常大的瞬时值。`SetInterval` / `SetNicFilter` / `GetNicList` / `TryGetNicName` 供 UI 线程调用，内部用锁与定时器线程互斥。
+纯 BCL 的网卡累计字节采样器。每 3 秒刷新网卡列表，只保留 `OperationalStatus.Up`、非 `Loopback` / `Tunnel` 且有 TCP/IP 单播地址的候选网卡（无任何单播地址的底层接口如 WAN Miniport，`ipconfig /all` 也不会显示，一并排除；属性查询失败的网卡按无绑定处理）；按当前采样间隔汇总参与统计网卡（全部候选或 `SetNicFilter` 指定的单张）`GetIPStatistics()` 的 IPv4 + IPv6 合计字节，用滑动窗口计算速率：快档为 1 秒窗口（至少 400ms 跨度），慢档窗口约 1.2 × 间隔，速率等于最近一个间隔的增量 ÷ 间隔。同时维护候选网卡 `NicInfo(Id, Name)` 快照供详情页切换。计数器回绕、网卡重连或参与统计的网卡集合变化时丢弃旧窗口并重设基线，避免异常大的瞬时值。`SetInterval` / `SetNicFilter` / `GetNicList` / `TryGetNicName` 供 UI 线程调用，内部用锁与定时器线程互斥。
 ### `src/Core/NetSpeedState.cs`
 跨线程共享的上行 / 下行状态与平滑。采样线程 `Push` / `PushIdle`，绘制线程 `Read`。上升、下降分别使用不同系数，零流量再乘衰减，保证回落不突兀；同时保留 60 个样本供详情页折线使用。`Mode` 用 `Volatile` 读写。
 ### `src/Core/SpeedFormat.cs`

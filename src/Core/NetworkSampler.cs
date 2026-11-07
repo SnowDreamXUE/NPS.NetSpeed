@@ -8,8 +8,8 @@ namespace NPS.NetSpeed.Core;
 internal readonly record struct NicInfo(string Id, string Name);
 
 /// <summary>
-/// 纯 BCL 的网卡累计字节采样器：把候选网卡（已启用、非环回、非隧道，且通过网卡过滤）
-/// 的 IP 统计（IPv4 + IPv6 合计）相加，再用滑动窗口算速率。
+/// 纯 BCL 的网卡累计字节采样器：把候选网卡（已启用、非环回、非隧道、有 TCP/IP 单播地址，
+/// 且通过网卡过滤）的 IP 统计（IPv4 + IPv6 合计）相加，再用滑动窗口算速率。
 ///
 /// 速率窗口随采样间隔缩放：100ms 快档维持 1s 滑动窗口；慢档位窗口 ≈ 1.2 × 间隔，
 /// 恰好覆盖最近两个样本，速率等于「最近一个间隔内的字节增量 ÷ 间隔」。
@@ -199,6 +199,16 @@ internal sealed class NetworkSampler
                 if (nic.OperationalStatus != OperationalStatus.Up) continue;
                 if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
                 if (nic.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
+                // 没有任何单播地址的接口（WAN Miniport 之类）没有 TCP/IP 绑定，
+                // ipconfig 也不显示，统计不到流量，一并排除
+                try
+                {
+                    if (nic.GetIPProperties().UnicastAddresses.Count == 0) continue;
+                }
+                catch
+                {
+                    continue; // 属性查询失败的异常网卡按「无协议绑定」处理
+                }
                 candidates.Add(nic);
                 infos.Add(new NicInfo(nic.Id, nic.Name));
             }
