@@ -28,8 +28,8 @@ internal sealed class NetSpeedWidget : IAutoWidthWidget
 
     private readonly NetSpeedPlugin _plugin;
     private readonly NetSpeedDetailPage _detail;
-    private int _downUnit;
-    private int _upUnit;
+    private int _downUnit = SpeedFormat.MinUnitIndex;
+    private int _upUnit = SpeedFormat.MinUnitIndex;
 
     public NetSpeedWidget(NetSpeedPlugin plugin)
     {

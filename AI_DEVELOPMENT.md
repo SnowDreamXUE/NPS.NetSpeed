@@ -71,7 +71,7 @@ NPS.NetSpeed/
 ### `src/Core/NetSpeedState.cs`
 跨线程共享的上行 / 下行状态与平滑。采样线程 `Push` / `PushIdle`，绘制线程 `Read`。上升、下降分别使用不同系数，零流量再乘衰减，保证回落不突兀；同时保留 60 个样本供详情页折线使用。`Mode` 用 `Volatile` 读写。
 ### `src/Core/SpeedFormat.cs`
-数值与单位拆分：`B/s → KB/s → MB/s → GB/s`，单位切换带 15% 回差，避免读数在单位边界抖动；小数位按量级收敛（`B/s` 无小数，`KB/s` 小于 100 保留 1 位，`MB/s` / `GB/s` 小于 10 保留 2 位）。低于 4 B/s 统一为 `0 B/s`。
+数值与单位拆分：最小单位由 `Format` 的 `minUnitIndex` 参数决定——岛上收起态组件为 `KB/s`（`MinUnitIndex`），详情页大号读数为 `B/s`（`LowestUnitIndex`），向上自适应 `KB/s` → `MB/s` → `GB/s`；单位切换带 15% 回差，避免读数在单位边界抖动；小数位按量级收敛（`B/s` 无小数，`KB/s` 小于 100 保留 1 位，`MB/s` / `GB/s` 小于 10 保留 2 位）。内部采样值低于 4 B/s 统一显示为零读数（岛上 `0 KB/s`，详情页 `0 B/s`）。
 ### `src/Rendering/SpeedPaint.cs`
 主题派生配色与绘制工具。强调色由品牌色向 `RenderTheme.TextColor` 混合，深浅主题都保留对比度；矢量箭头不依赖字体字形；详情页折线只画线，不做面积填充。
 ### `src/Rendering/PluginFont.cs`

@@ -34,7 +34,7 @@ public sealed class NetSpeedPlugin : INotchPlugin, IDisposable
 
     public string Id => "com.snow.netspeed";
     public string DisplayName => "网络速度";
-    public string Version => "1.1.0";
+    public string Version => typeof(NetSpeedPlugin).Assembly.GetName().Version!.ToString(3);
     public string Author => "Snow";
 
     /// <summary>当前采样间隔档位索引（0=100ms / 1=500ms / 2=1秒 / 3=5秒 / 4=10秒）。</summary>

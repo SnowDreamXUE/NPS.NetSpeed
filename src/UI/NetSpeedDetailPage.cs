@@ -52,8 +52,8 @@ internal sealed class NetSpeedDetailPage : IDetailPage
     private readonly NetSpeedPlugin _plugin;
     private readonly float[] _downSamples = new float[NetSpeedState.HistoryCapacity];
     private readonly float[] _upSamples = new float[NetSpeedState.HistoryCapacity];
-    private int _downUnit;
-    private int _upUnit;
+    private int _downUnit = SpeedFormat.LowestUnitIndex;
+    private int _upUnit = SpeedFormat.LowestUnitIndex;
 
     public NetSpeedDetailPage(NetSpeedPlugin plugin) => _plugin = plugin;
 
@@ -180,7 +180,7 @@ internal sealed class NetSpeedDetailPage : IDetailPage
         SKColor text, SKColor sub, WidgetFrame frame, int count)
     {
         int unitIndex = down ? _downUnit : _upUnit;
-        SpeedFormat.Format(bps, ref unitIndex, out string number, out string unit);
+        SpeedFormat.Format(bps, ref unitIndex, out string number, out string unit, SpeedFormat.LowestUnitIndex);
         if (down) _downUnit = unitIndex;
         else _upUnit = unitIndex;
 

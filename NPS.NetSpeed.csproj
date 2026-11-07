@@ -7,7 +7,7 @@
     <OutputType>Library</OutputType>
     <AssemblyName>NPS.NetSpeed</AssemblyName>
     <RootNamespace>NPS.NetSpeed</RootNamespace>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <Authors>Snow</Authors>
     <Copyright>Copyright © 2026 SnowDreamXUE</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
