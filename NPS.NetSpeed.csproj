@@ -1,13 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- 必须与宿主 NPS-v2.1.0 完全一致，否则插件加载会落到 BadImage / HostMismatch -->
+    <!-- 与目标宿主 NPS-v2.3.1 的目标框架保持一致。 -->
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <OutputType>Library</OutputType>
     <AssemblyName>NPS.NetSpeed</AssemblyName>
     <RootNamespace>NPS.NetSpeed</RootNamespace>
-    <Version>1.1.2</Version>
+    <Version>1.2.0</Version>
     <Authors>Snow</Authors>
     <Copyright>Copyright © 2026 SnowDreamXUE</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -26,7 +26,9 @@
   <!-- 编译后自动把 dll + plugin.json 复制到主程序输出目录的 plugins\NPS.NetSpeed\，省得手动搬 -->
   <Target Name="InstallToHostPlugins" AfterTargets="Build">
     <PropertyGroup>
-      <HostPluginDir>$(MSBuildThisFileDirectory)..\NotchPeninsula\bin\$(Configuration)\$(TargetFramework)\plugins\NPS.NetSpeed</HostPluginDir>
+      <HostOutputDir>$(MSBuildThisFileDirectory)..\NotchPeninsula\bin\$(Configuration)\$(TargetFramework)</HostOutputDir>
+      <HostOutputDir Condition="'$(RuntimeIdentifier)' != ''">$(HostOutputDir)\$(RuntimeIdentifier)</HostOutputDir>
+      <HostPluginDir>$(HostOutputDir)\plugins\NPS.NetSpeed</HostPluginDir>
     </PropertyGroup>
     <MakeDir Directories="$(HostPluginDir)" />
     <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll"

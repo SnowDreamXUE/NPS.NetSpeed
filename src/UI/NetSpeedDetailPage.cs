@@ -7,11 +7,11 @@ using SkiaSharp;
 namespace NPS.NetSpeed.UI;
 
 /// <summary>
-/// 右键展开的详情页：采样间隔 / 模式 / 网卡选择 + 大号数值 + 6 秒曲线。
+/// 右键展开的详情页：采样间隔 / 模式 / 网卡选择 + 大号数值 + 最近 60 个样本的曲线。
 /// 排版永远按 <see cref="MeasureWidth"/> / <see cref="MeasureHeight"/> 的目标尺寸算，
 /// 再把整块内容缩放平移进当前 rect（宿主展开动画期间 rect 是插值尺寸）。
 /// </summary>
-internal sealed class NetSpeedDetailPage : IDetailPage
+internal sealed class NetSpeedDetailPage : IDetailPage, IDisposable
 {
     private const float LayoutW = 360f;
     private const float LayoutH = 262f;
@@ -49,11 +49,17 @@ internal sealed class NetSpeedDetailPage : IDetailPage
     // 火绒流量监控行：点击拉起火绒 NetFlow.exe（回退主界面 wsctrl.exe）
     private static readonly SKRect FlowRow = new(PaddingX, 104f, LayoutW - PaddingX, 128f);
 
+    private const float DownTop = 144f;
+    private const float UpTop = 196f;
+    private static readonly SKRect DownChart = ChartArea(DownTop);
+    private static readonly SKRect UpChart = ChartArea(UpTop);
+    private static readonly string[] IntervalCaptions = Array.ConvertAll(
+        NetSpeedPlugin.IntervalLabels, label => $"实时 · {label} 采样");
+
     private readonly NetSpeedPlugin _plugin;
-    private readonly float[] _downSamples = new float[NetSpeedState.HistoryCapacity];
-    private readonly float[] _upSamples = new float[NetSpeedState.HistoryCapacity];
-    private int _downUnit = SpeedFormat.LowestUnitIndex;
-    private int _upUnit = SpeedFormat.LowestUnitIndex;
+    private readonly object _drawGate = new();
+    private DrawingResources? _drawing;
+    private bool _disposed;
 
     public NetSpeedDetailPage(NetSpeedPlugin plugin) => _plugin = plugin;
 
@@ -62,179 +68,189 @@ internal sealed class NetSpeedDetailPage : IDetailPage
 
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
-        if (frame.Alpha == 0) return;
-        if (rect.Width < 1f || rect.Height < 1f) return;
+        if (frame.Alpha == 0 || rect.Width < 1f || rect.Height < 1f) return;
 
         float scale = Math.Min(Math.Min(rect.Width / LayoutW, rect.Height / LayoutH), 1f);
         if (!(scale > 0f)) return;
 
-        canvas.Save();
-        canvas.Translate(rect.MidX, rect.MidY);
-        canvas.Scale(scale);
-        canvas.Translate(-LayoutW * 0.5f, -LayoutH * 0.5f);
-        DrawContent(canvas, frame);
-        canvas.Restore();
+        lock (_drawGate)
+        {
+            if (_disposed) return;
+            var drawing = _drawing ??= new DrawingResources();
+            int saveCount = canvas.Save();
+            try
+            {
+                drawing.Normal.Typeface = PluginFont.Normal() ?? WidgetKit.Typeface();
+                drawing.Bold.Typeface = PluginFont.Bold() ?? WidgetKit.Typeface(TextWeight.Bold);
+                canvas.Translate(rect.MidX, rect.MidY);
+                canvas.Scale(scale);
+                canvas.Translate(-LayoutW * 0.5f, -LayoutH * 0.5f);
+                DrawContent(canvas, frame, drawing);
+            }
+            finally
+            {
+                drawing.Normal.Typeface = null;
+                drawing.Bold.Typeface = null;
+                canvas.RestoreToCount(saveCount);
+            }
+        }
     }
 
-    private void DrawContent(SKCanvas canvas, WidgetFrame frame)
+    private void DrawContent(SKCanvas canvas, WidgetFrame frame, DrawingResources drawing)
     {
         byte alpha = frame.Alpha;
         var text = frame.Theme.TextColor.WithAlpha(alpha);
         var sub = frame.Theme.SubTextColor.WithAlpha((byte)(alpha * 0.86f));
         var faint = frame.Theme.TextColor.WithAlpha((byte)(alpha * 0.08f));
         var divider = frame.Theme.SubTextColor.WithAlpha((byte)(alpha * 0.16f));
+        var chartBaseline = frame.Theme.SubTextColor.WithAlpha((byte)(alpha * 0.18f));
         var downAccent = SpeedPaint.Accent(frame.Theme.TextColor, SpeedPaint.DownHue, alpha);
         var upAccent = SpeedPaint.Accent(frame.Theme.TextColor, SpeedPaint.UpHue, alpha);
 
-        int count = _plugin.State.CopyHistory(_downSamples, _upSamples);
-        var snapshot = _plugin.State.Read();
+        if (_plugin.State.ReadHistory(ref drawing.HistoryVersion, drawing.DownSamples, drawing.UpSamples,
+            out int count, out var snapshot))
+        {
+            SpeedPaint.UpdateSparkline(drawing.DownPath, DownChart, drawing.DownSamples, count);
+            SpeedPaint.UpdateSparkline(drawing.UpPath, UpChart, drawing.UpSamples, count);
+        }
 
-        using (var title = MakePaint(15f, text, true))
-        {
-            canvas.DrawText("网络速度", PaddingX, 30f, title);
-        }
-        using (var caption = MakePaint(9.2f, sub, false))
-        {
-            caption.TextAlign = SKTextAlign.Right;
-            canvas.DrawText($"实时 · {NetSpeedPlugin.IntervalLabels[_plugin.IntervalIndex]} 采样", LayoutW - PaddingX, 30f, caption);
-        }
+        int interval = _plugin.IntervalIndex;
+        canvas.DrawText("网络速度", PaddingX, 30f, TextPaint(drawing.Bold, 15f, text));
+        canvas.DrawText(IntervalCaptions[interval], LayoutW - PaddingX, 30f,
+            TextPaint(drawing.Normal, 9.2f, sub, SKTextAlign.Right));
 
         var mode = _plugin.State.Mode;
         var labels = NetSpeedPlugin.IntervalLabels;
         for (int i = 0; i < labels.Length; i++)
-            DrawChip(canvas, IntervalChips[i], labels[i], _plugin.IntervalIndex == i, downAccent, faint, sub, alpha);
-        DrawChip(canvas, SideChip, "并列", mode == SpeedMode.SideBySide, downAccent, faint, sub, alpha);
-        DrawChip(canvas, RowChip, "双行", mode == SpeedMode.DualRow, downAccent, faint, sub, alpha);
+            DrawChip(canvas, drawing, IntervalChips[i], labels[i], interval == i, downAccent, faint, sub, alpha);
+        DrawChip(canvas, drawing, SideChip, "并列", mode == SpeedMode.SideBySide, downAccent, faint, sub, alpha);
+        DrawChip(canvas, drawing, RowChip, "双行", mode == SpeedMode.DualRow, downAccent, faint, sub, alpha);
 
-        DrawNicRow(canvas, text, sub, faint, alpha);
-        DrawFlowRow(canvas, text, sub, faint);
+        DrawNicRow(canvas, drawing, text, sub, faint);
+        DrawFlowRow(canvas, drawing, text, sub, faint);
 
-        using (var rule = new SKPaint { IsAntialias = true, Color = divider })
-        {
-            canvas.DrawRect(PaddingX, 136f, LayoutW - PaddingX * 2f, 0.8f, rule);
-        }
+        drawing.Fill.Color = divider;
+        canvas.DrawRect(PaddingX, 136f, LayoutW - PaddingX * 2f, 0.8f, drawing.Fill);
 
-        DrawMetric(canvas, 144f, true, snapshot.DownBps, downAccent, text, sub, frame, count);
-        DrawMetric(canvas, 196f, false, snapshot.UpBps, upAccent, text, sub, frame, count);
+        DrawMetric(canvas, drawing, DownTop, "↓ 下行", drawing.DownText.Format(snapshot.DownBps), downAccent, text, sub);
+        DrawSparkline(canvas, drawing, DownChart, drawing.DownPath, downAccent, chartBaseline);
+        DrawMetric(canvas, drawing, UpTop, "↑ 上行", drawing.UpText.Format(snapshot.UpBps), upAccent, text, sub);
+        DrawSparkline(canvas, drawing, UpChart, drawing.UpPath, upAccent, chartBaseline);
 
-        using (var hint = MakePaint(9f, sub, false))
-        {
-            canvas.DrawText("左键点击岛上组件可快速切换 · 右键展开 / 收起", PaddingX, 252f, hint);
-        }
+        canvas.DrawText("左键点击岛上组件可快速切换 · 右键展开 / 收起", PaddingX, 252f,
+            TextPaint(drawing.Normal, 9f, sub));
     }
 
     /// <summary>网卡选择行：浅色圆角条，左侧固定「网卡」，中间当前网卡名（超宽截断），右侧切换提示。</summary>
-    private void DrawNicRow(SKCanvas canvas, SKColor text, SKColor sub, SKColor faint, byte alpha)
+    private void DrawNicRow(SKCanvas canvas, DrawingResources drawing, SKColor text, SKColor sub, SKColor faint)
     {
-        using (var fill = new SKPaint { IsAntialias = true, Color = faint })
-        {
-            canvas.DrawRoundRect(NicRow, 8f, 8f, fill);
-        }
+        drawing.Fill.Color = faint;
+        canvas.DrawRoundRect(NicRow, 8f, 8f, drawing.Fill);
+        canvas.DrawText("网卡", NicRow.Left + 10f, NicRow.MidY + 3.6f, TextPaint(drawing.Normal, 10.5f, sub));
 
-        using (var label = MakePaint(10.5f, sub, false))
-        {
-            canvas.DrawText("网卡", NicRow.Left + 10f, NicRow.MidY + 3.6f, label);
-        }
+        canvas.Save();
+        canvas.ClipRect(SKRect.Create(NicValueX, NicRow.Top, NicValueMaxRight - NicValueX, NicRow.Height));
+        canvas.DrawText(_plugin.NicLabel, NicValueX, NicRow.MidY + 3.6f, TextPaint(drawing.Bold, 10.5f, text));
+        canvas.Restore();
 
-        using (var value = MakePaint(10.5f, text, true))
-        {
-            canvas.Save();
-            canvas.ClipRect(SKRect.Create(NicValueX, NicRow.Top, NicValueMaxRight - NicValueX, NicRow.Height));
-            canvas.DrawText(_plugin.NicLabel, NicValueX, NicRow.MidY + 3.6f, value);
-            canvas.Restore();
-        }
-
-        using (var tip = MakePaint(9f, sub, false))
-        {
-            tip.TextAlign = SKTextAlign.Right;
-            canvas.DrawText("点击切换 ▸", NicRow.Right - 10f, NicRow.MidY + 3.8f, tip);
-        }
+        canvas.DrawText("点击切换 ▸", NicRow.Right - 10f, NicRow.MidY + 3.8f,
+            TextPaint(drawing.Normal, 9f, sub, SKTextAlign.Right));
     }
 
-    /// <summary>火绒流量监控行：浅色圆角条，左侧固定标签，右侧「点击打开 ▸」提示。</summary>
-    private static void DrawFlowRow(SKCanvas canvas, SKColor text, SKColor sub, SKColor faint)
+    private static void DrawFlowRow(SKCanvas canvas, DrawingResources drawing, SKColor text, SKColor sub, SKColor faint)
     {
-        using (var fill = new SKPaint { IsAntialias = true, Color = faint })
-        {
-            canvas.DrawRoundRect(FlowRow, 8f, 8f, fill);
-        }
-
-        using (var label = MakePaint(10.5f, sub, false))
-        {
-            canvas.DrawText("火绒", FlowRow.Left + 10f, FlowRow.MidY + 3.6f, label);
-        }
-
-        using (var value = MakePaint(10.5f, text, true))
-        {
-            canvas.DrawText("打开流量监控", FlowRow.Left + 52f, FlowRow.MidY + 3.6f, value);
-        }
-
-        using (var tip = MakePaint(9f, sub, false))
-        {
-            tip.TextAlign = SKTextAlign.Right;
-            canvas.DrawText("点击打开 ▸", FlowRow.Right - 10f, FlowRow.MidY + 3.8f, tip);
-        }
+        drawing.Fill.Color = faint;
+        canvas.DrawRoundRect(FlowRow, 8f, 8f, drawing.Fill);
+        canvas.DrawText("火绒", FlowRow.Left + 10f, FlowRow.MidY + 3.6f, TextPaint(drawing.Normal, 10.5f, sub));
+        canvas.DrawText("打开流量监控", FlowRow.Left + 52f, FlowRow.MidY + 3.6f, TextPaint(drawing.Bold, 10.5f, text));
+        canvas.DrawText("点击打开 ▸", FlowRow.Right - 10f, FlowRow.MidY + 3.8f,
+            TextPaint(drawing.Normal, 9f, sub, SKTextAlign.Right));
     }
 
-    private void DrawMetric(SKCanvas canvas, float top, bool down, float bps, SKColor accent,
-        SKColor text, SKColor sub, WidgetFrame frame, int count)
+    private static void DrawMetric(SKCanvas canvas, DrawingResources drawing, float top, string label,
+        (string Number, string Unit) reading, SKColor accent, SKColor text, SKColor sub)
     {
-        int unitIndex = down ? _downUnit : _upUnit;
-        SpeedFormat.Format(bps, ref unitIndex, out string number, out string unit, SpeedFormat.LowestUnitIndex);
-        if (down) _downUnit = unitIndex;
-        else _upUnit = unitIndex;
+        canvas.DrawText(label, PaddingX, top + 14f, TextPaint(drawing.Bold, 10.5f, accent));
 
-        using (var label = MakePaint(10.5f, accent, true))
-        {
-            canvas.DrawText(down ? "↓ 下行" : "↑ 上行", PaddingX, top + 14f, label);
-        }
-
-        using (var numberPaint = MakePaint(22f, text, true))
-        {
-            float baseline = top + 45f;
-            canvas.DrawText(number, PaddingX, baseline, numberPaint);
-            float numberWidth = numberPaint.MeasureText(number);
-
-            using var unitPaint = MakePaint(10.5f, sub, false);
-            canvas.DrawText(unit, PaddingX + numberWidth + 5f, baseline - 1.5f, unitPaint);
-        }
-
-        var samples = down ? _downSamples : _upSamples;
-        var area = new SKRect(152f, top + 4f, LayoutW - PaddingX, top + 48f);
-        SpeedPaint.DrawSparkline(canvas, area, samples, count, accent,
-            frame.Theme.SubTextColor.WithAlpha((byte)(frame.Alpha * 0.18f)));
+        float baseline = top + 45f;
+        var numberPaint = TextPaint(drawing.Bold, 22f, text);
+        canvas.DrawText(reading.Number, PaddingX, baseline, numberPaint);
+        float numberWidth = numberPaint.MeasureText(reading.Number);
+        canvas.DrawText(reading.Unit, PaddingX + numberWidth + 5f, baseline - 1.5f,
+            TextPaint(drawing.Normal, 10.5f, sub));
     }
 
-    private static void DrawChip(SKCanvas canvas, SKRect rect, string label, bool active,
+    private static SKRect ChartArea(float top) => new(152f, top + 4f, LayoutW - PaddingX, top + 48f);
+
+    private static void DrawSparkline(SKCanvas canvas, DrawingResources drawing, SKRect area,
+        SKPath path, SKColor accent, SKColor baseline)
+    {
+        drawing.Fill.Color = baseline;
+        canvas.DrawRect(area.Left, area.Bottom - 0.6f, area.Width, 0.8f, drawing.Fill);
+        if (path.IsEmpty) return;
+        drawing.Stroke.Color = accent;
+        canvas.DrawPath(path, drawing.Stroke);
+    }
+
+    private static void DrawChip(SKCanvas canvas, DrawingResources drawing, SKRect rect, string label, bool active,
         SKColor accent, SKColor inactiveBackground, SKColor subText, byte alpha)
     {
         var background = active ? accent : inactiveBackground;
-        using (var fill = new SKPaint { IsAntialias = true, Color = background })
-        {
-            canvas.DrawRoundRect(rect, 9f, 9f, fill);
-        }
+        drawing.Fill.Color = background;
+        canvas.DrawRoundRect(rect, 9f, 9f, drawing.Fill);
 
-        var labelColor = active
-            ? SpeedPaint.OnAccent(background).WithAlpha(alpha)
-            : subText;
-        using var textPaint = MakePaint(10.5f, labelColor, active);
-        textPaint.TextAlign = SKTextAlign.Center;
-        canvas.DrawText(label, rect.MidX, rect.MidY + 3.6f, textPaint);
+        var labelColor = active ? SpeedPaint.OnAccent(background).WithAlpha(alpha) : subText;
+        var paint = TextPaint(active ? drawing.Bold : drawing.Normal, 10.5f, labelColor, SKTextAlign.Center);
+        canvas.DrawText(label, rect.MidX, rect.MidY + 3.6f, paint);
     }
 
-    /// <summary>详情页可能显示中文，优先借宿主正文字体 / 兜底字体，拿不到就交给 Skia 默认字体。</summary>
-    private static SKPaint MakePaint(float size, SKColor color, bool bold)
+    private static SKPaint TextPaint(SKPaint paint, float size, SKColor color, SKTextAlign align = SKTextAlign.Left)
     {
-        var paint = new SKPaint
+        paint.TextSize = size;
+        paint.Color = color;
+        paint.TextAlign = align;
+        return paint;
+    }
+
+    public void Dispose()
+    {
+        lock (_drawGate)
+        {
+            _disposed = true;
+            _drawing?.Dispose();
+            _drawing = null;
+        }
+    }
+
+    private sealed class DrawingResources : IDisposable
+    {
+        internal readonly SKPaint Normal = new() { IsAntialias = true };
+        internal readonly SKPaint Bold = new() { IsAntialias = true };
+        internal readonly SKPaint Fill = new() { IsAntialias = true };
+        internal readonly SKPaint Stroke = new()
         {
             IsAntialias = true,
-            TextSize = size,
-            Color = color,
-            Typeface = bold
-                ? (PluginFont.Bold() ?? WidgetKit.Typeface(TextWeight.Bold))
-                : (PluginFont.Normal() ?? WidgetKit.Typeface()),
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1.3f,
+            StrokeCap = SKStrokeCap.Round,
         };
-        return paint;
+        internal readonly SKPath DownPath = new();
+        internal readonly SKPath UpPath = new();
+        internal readonly float[] DownSamples = new float[NetSpeedState.HistoryCapacity];
+        internal readonly float[] UpSamples = new float[NetSpeedState.HistoryCapacity];
+        internal readonly SpeedText DownText = new(SpeedFormat.LowestUnitIndex);
+        internal readonly SpeedText UpText = new(SpeedFormat.LowestUnitIndex);
+        internal long HistoryVersion;
+
+        public void Dispose()
+        {
+            Normal.Dispose();
+            Bold.Dispose();
+            Fill.Dispose();
+            Stroke.Dispose();
+            DownPath.Dispose();
+            UpPath.Dispose();
+        }
     }
 
     public WidgetHit HitTest(float x, float y, SKRect rect)

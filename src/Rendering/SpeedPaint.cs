@@ -33,37 +33,33 @@ internal static class SpeedPaint
         return luminance > 0.62f ? new SKColor(20, 20, 20) : SKColors.White;
     }
 
-    /// <summary>矢量箭头，不依赖字体里有没有 “↓ / ↑” 字形。</summary>
-    public static void DrawArrow(SKCanvas canvas, float cx, float cy, bool up, SKColor color, float scale = 1f)
-    {
-        using var paint = new SKPaint
+    public static SKPaint CreateArrowPaint()
+        => new()
         {
             IsAntialias = true,
-            Color = color,
             Style = SKPaintStyle.Stroke,
-            StrokeWidth = 1.25f * scale,
+            StrokeWidth = 1.25f,
             StrokeCap = SKStrokeCap.Round,
         };
 
+    /// <summary>矢量箭头，不依赖字体里的 “↓ / ↑” 字形。</summary>
+    public static void DrawArrow(SKCanvas canvas, float cx, float cy, bool up, SKPaint paint)
+    {
         float direction = up ? -1f : 1f;
-        float half = 5.0f * scale;
-        float wing = 2.9f * scale;
+        const float half = 5f;
+        const float wing = 2.9f;
         float tipY = cy + half * direction;
         float tailY = cy - half * direction;
 
         canvas.DrawLine(cx, tailY, cx, tipY, paint);
-        canvas.DrawLine(cx, tipY, cx - wing, tipY - 3.1f * scale * direction, paint);
-        canvas.DrawLine(cx, tipY, cx + wing, tipY - 3.1f * scale * direction, paint);
+        canvas.DrawLine(cx, tipY, cx - wing, tipY - 3.1f * direction, paint);
+        canvas.DrawLine(cx, tipY, cx + wing, tipY - 3.1f * direction, paint);
     }
 
-    /// <summary>最近 6 秒的折线趋势。只画线，不做面积填充，避免任何「条形 / 进度」观感。</summary>
-    public static void DrawSparkline(SKCanvas canvas, SKRect area, float[] samples, int count,
-        SKColor accent, SKColor baseline)
+    /// <summary>按时间顺序重建趋势线，保留路径缓冲供下一次更新。</summary>
+    public static void UpdateSparkline(SKPath path, SKRect area, float[] samples, int count)
     {
-        using (var lineBase = new SKPaint { IsAntialias = true, Color = baseline })
-        {
-            canvas.DrawRect(area.Left, area.Bottom - 0.6f, area.Width, 0.8f, lineBase);
-        }
+        path.Rewind();
         if (count < 2) return;
 
         float max = 1024f;
@@ -73,7 +69,6 @@ internal static class SpeedPaint
         }
         max *= 1.12f;
 
-        using var path = new SKPath();
         for (int i = 0; i < count; i++)
         {
             float x = area.Left + area.Width * i / (count - 1);
@@ -81,15 +76,5 @@ internal static class SpeedPaint
             if (i == 0) path.MoveTo(x, y);
             else path.LineTo(x, y);
         }
-
-        using var strokePaint = new SKPaint
-        {
-            IsAntialias = true,
-            Style = SKPaintStyle.Stroke,
-            StrokeWidth = 1.3f,
-            StrokeCap = SKStrokeCap.Round,
-            Color = accent,
-        };
-        canvas.DrawPath(path, strokePaint);
     }
 }

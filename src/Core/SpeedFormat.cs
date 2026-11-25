@@ -62,3 +62,29 @@ internal static class SpeedFormat
         unit = UnitNames[unitIndex];
     }
 }
+
+/// <summary>复用同一个读数的文本，并为每个通道独立保留单位回差。</summary>
+internal sealed class SpeedText
+{
+    private readonly int _minUnitIndex;
+    private float _bps;
+    private int _unitIndex;
+    private string _number = "";
+    private string _unit = "";
+
+    public SpeedText(int minUnitIndex)
+    {
+        _minUnitIndex = minUnitIndex;
+        _unitIndex = minUnitIndex;
+    }
+
+    public (string Number, string Unit) Format(float bps)
+    {
+        if (_number.Length == 0 || !bps.Equals(_bps))
+        {
+            SpeedFormat.Format(bps, ref _unitIndex, out _number, out _unit, _minUnitIndex);
+            _bps = bps;
+        }
+        return (_number, _unit);
+    }
+}
