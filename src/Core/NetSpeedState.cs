@@ -19,7 +19,7 @@ internal readonly record struct SpeedSnapshot(float DownBps, float UpBps);
 /// </summary>
 internal sealed class NetSpeedState
 {
-    public const int HistoryCapacity = 60;   // 100ms × 60 = 6 秒
+    public const int HistoryCapacity = 60;
 
     private readonly object _gate = new();
     private readonly float[] _downHistory = new float[HistoryCapacity];
@@ -28,6 +28,7 @@ internal sealed class NetSpeedState
     private double _up;
     private int _count;
     private int _mode;
+    private long _historyVersion;
 
     public SpeedMode Mode
     {
@@ -36,7 +37,7 @@ internal sealed class NetSpeedState
     }
 
     /// <summary>写入一次采样结果。上行衰减比上升慢，避免数值在 0 附近跳。</summary>
-    public void Push(long nowMs, double downRaw, double upRaw)
+    public void Push(double downRaw, double upRaw)
     {
         lock (_gate)
         {
@@ -47,15 +48,13 @@ internal sealed class NetSpeedState
             ShiftAppend(_downHistory, (float)_down);
             ShiftAppend(_upHistory, (float)_up);
             if (_count < HistoryCapacity) _count++;
+            _historyVersion++;
         }
     }
 
-    /// <summary>采样还没准备好（启动首秒 / 网卡瞬时失效）时按 0 推进，让数值平滑落回零。</summary>
-    public void PushIdle(long nowMs) => Push(nowMs, 0, 0);
-
     private static double Ease(double current, double target)
     {
-        if (target <= 0) return current * 0.72;            // 零流量：每 100ms 衰减，约 1 秒回落
+        if (target <= 0) return current * 0.72;            // 零流量：每次采样衰减
         double k = target > current ? 0.50 : 0.26;         // 上升快、下降缓
         return current + (target - current) * k;
     }
@@ -71,31 +70,20 @@ internal sealed class NetSpeedState
         lock (_gate) return new SpeedSnapshot((float)_down, (float)_up);
     }
 
-    /// <summary>把最近 n 个历史样本按时间顺序拷进调用方的缓冲区，返回 n。</summary>
-    public int CopyHistory(float[] downTarget, float[] upTarget)
+    /// <summary>读取当前速率，只在历史变化时复制样本。</summary>
+    public bool ReadHistory(ref long version, float[] downTarget, float[] upTarget,
+        out int count, out SpeedSnapshot snapshot)
     {
         lock (_gate)
         {
-            int n = Math.Min(_count, Math.Min(downTarget.Length, upTarget.Length));
-            int start = HistoryCapacity - n;
-            if (n > 0)
-            {
-                Array.Copy(_downHistory, start, downTarget, 0, n);
-                Array.Copy(_upHistory, start, upTarget, 0, n);
-            }
-            return n;
-        }
-    }
-
-    public void Reset()
-    {
-        lock (_gate)
-        {
-            Array.Clear(_downHistory, 0, HistoryCapacity);
-            Array.Clear(_upHistory, 0, HistoryCapacity);
-            _down = 0;
-            _up = 0;
-            _count = 0;
+            snapshot = new SpeedSnapshot((float)_down, (float)_up);
+            count = Math.Min(_count, Math.Min(downTarget.Length, upTarget.Length));
+            if (version == _historyVersion) return false;
+            int start = HistoryCapacity - count;
+            Array.Copy(_downHistory, start, downTarget, 0, count);
+            Array.Copy(_upHistory, start, upTarget, 0, count);
+            version = _historyVersion;
+            return true;
         }
     }
 }

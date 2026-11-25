@@ -25,11 +25,18 @@ internal sealed class NetSpeedWidget : IAutoWidthWidget
     private const float ValueSize = 10f;
     private const float UnitSize = 8f;
     private const float BaselineOffset = 3.4f;
+    private static readonly Box SideBySideLayout = WidgetKit.Icon(ChannelW * 2f + ChannelGap);
+    private static readonly Box DualRowLayout = WidgetKit.Icon(ChannelW);
 
     private readonly NetSpeedPlugin _plugin;
     private readonly NetSpeedDetailPage _detail;
-    private int _downUnit = SpeedFormat.MinUnitIndex;
-    private int _upUnit = SpeedFormat.MinUnitIndex;
+    private readonly object _drawGate = new();
+    private readonly SpeedText _downText = new(SpeedFormat.MinUnitIndex);
+    private readonly SpeedText _upText = new(SpeedFormat.MinUnitIndex);
+    private SKPaint? _arrowPaint;
+    private SKPaint? _valuePaint;
+    private SKPaint? _unitPaint;
+    private bool _deactivated;
 
     public NetSpeedWidget(NetSpeedPlugin plugin)
     {
@@ -42,21 +49,7 @@ internal sealed class NetSpeedWidget : IAutoWidthWidget
     public IDetailPage? DetailPage => _detail;
 
     public Box? Layout(float availableHeight)
-    {
-        // 双行：上下两行，每行一个通道，宽度只算一份
-        if (_plugin.State.Mode == SpeedMode.DualRow)
-            return WidgetKit.Row(
-                WidgetKit.Icon(ArrowW), WidgetKit.Gap(ArrowGap),
-                WidgetKit.Icon(ValueW), WidgetKit.Gap(ValueGap), WidgetKit.Icon(UnitW));
-
-        // 并列：两个通道左右并排，中间留一个槽间距
-        return WidgetKit.Row(
-            WidgetKit.Icon(ArrowW), WidgetKit.Gap(ArrowGap),
-            WidgetKit.Icon(ValueW), WidgetKit.Gap(ValueGap), WidgetKit.Icon(UnitW),
-            WidgetKit.Gap(ChannelGap),
-            WidgetKit.Icon(ArrowW), WidgetKit.Gap(ArrowGap),
-            WidgetKit.Icon(ValueW), WidgetKit.Gap(ValueGap), WidgetKit.Icon(UnitW));
-    }
+        => _plugin.State.Mode == SpeedMode.DualRow ? DualRowLayout : SideBySideLayout;
 
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
@@ -65,13 +58,39 @@ internal sealed class NetSpeedWidget : IAutoWidthWidget
         var content = WidgetKit.ContentRect(rect);
         if (content.Width < 40f || content.Height < 10f) return;
 
+        lock (_drawGate)
+        {
+            if (_deactivated) return;
+            var arrowPaint = _arrowPaint ??= SpeedPaint.CreateArrowPaint();
+            var valuePaint = _valuePaint ??= new SKPaint
+            {
+                IsAntialias = true, TextSize = ValueSize, TextAlign = SKTextAlign.Right,
+            };
+            var unitPaint = _unitPaint ??= new SKPaint { IsAntialias = true, TextSize = UnitSize };
+            try
+            {
+                valuePaint.Typeface = WidgetKit.Typeface(TextWeight.SemiBold);
+                unitPaint.Typeface = WidgetKit.Typeface();
+                DrawContent(canvas, content, frame, arrowPaint, valuePaint, unitPaint);
+            }
+            finally
+            {
+                valuePaint.Typeface = null;
+                unitPaint.Typeface = null;
+            }
+        }
+    }
+
+    private void DrawContent(SKCanvas canvas, SKRect content, WidgetFrame frame,
+        SKPaint arrowPaint, SKPaint valuePaint, SKPaint unitPaint)
+    {
         var snapshot = _plugin.State.Read();
-        SpeedFormat.Format(snapshot.DownBps, ref _downUnit, out string downNumber, out string downUnitName);
-        SpeedFormat.Format(snapshot.UpBps, ref _upUnit, out string upNumber, out string upUnitName);
+        var (downNumber, downUnit) = _downText.Format(snapshot.DownBps);
+        var (upNumber, upUnit) = _upText.Format(snapshot.UpBps);
 
         byte alpha = frame.Alpha;
-        var textColor = frame.Theme.TextColor.WithAlpha(alpha);
-        var subColor = frame.Theme.SubTextColor.WithAlpha((byte)(alpha * 0.85f));
+        valuePaint.Color = frame.Theme.TextColor.WithAlpha(alpha);
+        unitPaint.Color = frame.Theme.SubTextColor.WithAlpha((byte)(alpha * 0.85f));
         var downAccent = SpeedPaint.Accent(frame.Theme.TextColor, SpeedPaint.DownHue, alpha);
         var upAccent = SpeedPaint.Accent(frame.Theme.TextColor, SpeedPaint.UpHue, alpha);
         float offsetY = frame.TextOffsetY;
@@ -80,45 +99,31 @@ internal sealed class NetSpeedWidget : IAutoWidthWidget
         {
             float half = content.Height * 0.5f;
             DrawChannel(canvas, content.Left, content.Top + half * 0.5f + offsetY,
-                downNumber, downUnitName, downAccent, textColor, subColor, false);
+                downNumber, downUnit, downAccent, false, arrowPaint, valuePaint, unitPaint);
             DrawChannel(canvas, content.Left, content.Top + half * 1.5f + offsetY,
-                upNumber, upUnitName, upAccent, textColor, subColor, true);
+                upNumber, upUnit, upAccent, true, arrowPaint, valuePaint, unitPaint);
         }
         else
         {
             float centerY = content.MidY + offsetY;
             DrawChannel(canvas, content.Left, centerY,
-                downNumber, downUnitName, downAccent, textColor, subColor, false);
+                downNumber, downUnit, downAccent, false, arrowPaint, valuePaint, unitPaint);
             DrawChannel(canvas, content.Left + ChannelW + ChannelGap, centerY,
-                upNumber, upUnitName, upAccent, textColor, subColor, true);
+                upNumber, upUnit, upAccent, true, arrowPaint, valuePaint, unitPaint);
         }
     }
 
     /// <summary>一个通道：箭头（强调色）+ 右对齐数值（主文字色）+ 单位（次要文字色）。</summary>
     private static void DrawChannel(SKCanvas canvas, float x, float centerY,
-        string number, string unit, SKColor accent, SKColor textColor, SKColor subColor, bool up)
+        string number, string unit, SKColor accent, bool up,
+        SKPaint arrowPaint, SKPaint valuePaint, SKPaint unitPaint)
     {
-        SpeedPaint.DrawArrow(canvas, x + ArrowW * 0.5f, centerY, up, accent);
+        arrowPaint.Color = accent;
+        SpeedPaint.DrawArrow(canvas, x + ArrowW * 0.5f, centerY, up, arrowPaint);
 
         float valueRight = x + ArrowW + ArrowGap + ValueW;
-        DrawText(canvas, number, valueRight, centerY + BaselineOffset, ValueSize,
-            textColor, SKTextAlign.Right, TextWeight.SemiBold);
-        DrawText(canvas, unit, valueRight + ValueGap, centerY + BaselineOffset, UnitSize,
-            subColor, SKTextAlign.Left, TextWeight.Normal);
-    }
-
-    private static void DrawText(SKCanvas canvas, string text, float x, float baseline,
-        float size, SKColor color, SKTextAlign align, TextWeight weight)
-    {
-        using var paint = new SKPaint
-        {
-            IsAntialias = true,
-            TextSize = size,
-            Color = color,
-            TextAlign = align,
-            Typeface = WidgetKit.Typeface(weight),
-        };
-        canvas.DrawText(text, x, baseline, paint);
+        canvas.DrawText(number, valueRight, centerY + BaselineOffset, valuePaint);
+        canvas.DrawText(unit, valueRight + ValueGap, centerY + BaselineOffset, unitPaint);
     }
 
     public WidgetHit HitTest(float x, float y, SKRect rect)
@@ -135,10 +140,18 @@ internal sealed class NetSpeedWidget : IAutoWidthWidget
 
     public void OnRightClick() { }
 
-    public void OnActivate(IPluginHost host)
-    {
-        _plugin.ReadSettings(host);
-    }
+    public void OnActivate(IPluginHost host) => _plugin.ReloadSettings();
 
-    public void OnDeactivate() { }
+    public void OnDeactivate()
+    {
+        lock (_drawGate)
+        {
+            _deactivated = true;
+            _arrowPaint?.Dispose();
+            _valuePaint?.Dispose();
+            _unitPaint?.Dispose();
+            _arrowPaint = _valuePaint = _unitPaint = null;
+        }
+        _detail.Dispose();
+    }
 }

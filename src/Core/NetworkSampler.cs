@@ -14,10 +14,10 @@ internal readonly record struct NicInfo(string Id, string Name);
 /// 速率窗口随采样间隔缩放：100ms 快档维持 1s 滑动窗口；慢档位窗口 ≈ 1.2 × 间隔，
 /// 恰好覆盖最近两个样本，速率等于「最近一个间隔内的字节增量 ÷ 间隔」。
 ///
-/// 只在插件的定时器线程调用 TrySample（宿主 ScheduleRefresh 保证同一时刻只有一次回调在跑）；
+/// 只在插件的定时器回调中调用 TrySample；
 /// SetInterval / SetNicFilter / GetNicList / TryGetNicName 供 UI 线程调用，内部用 _gate 同步。
 /// </summary>
-internal sealed class NetworkSampler
+internal sealed class NetworkSampler(long intervalMs)
 {
     private const long FastWindowMs = 1000;        // 快档（≤833ms 间隔）的速率窗口
     private const long FastMinSpanMs = 400;        // 快档窗口内至少要有的跨度
@@ -30,7 +30,7 @@ internal sealed class NetworkSampler
     private readonly object _gate = new();
     private readonly Queue<Sample> _window = new();
     private readonly HashSet<string> _interfaceKeys = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _nicFilter = new(StringComparer.Ordinal);
+    private string _nicFilter = "";
 
     private NetworkInterface[] _interfaces = Array.Empty<NetworkInterface>();
     private List<NicInfo> _nicList = new();
@@ -38,28 +38,13 @@ internal sealed class NetworkSampler
     private long _lastRx;
     private long _lastTx;
     private bool _hasLast;
-    private long _intervalMs = 100;
+    private long _intervalMs = intervalMs;
 
     /// <summary>速率窗口跨度：慢档 ≈ 1.2 × 间隔，快档固定 1s。</summary>
     private long WindowMs => Math.Max(FastWindowMs, (long)(_intervalMs * 1.2));
 
     /// <summary>窗口内出数所需的最小跨度：慢档取间隔的 55%，保证至少跨过两个样本。</summary>
     private long MinSpanMs => Math.Max(FastMinSpanMs, (long)(_intervalMs * 0.55));
-
-    public void Reset()
-    {
-        lock (_gate)
-        {
-            _window.Clear();
-            _interfaceKeys.Clear();
-            _interfaces = Array.Empty<NetworkInterface>();
-            _nicList.Clear();
-            _interfacesReadAt = -1;
-            _lastRx = 0;
-            _lastTx = 0;
-            _hasLast = false;
-        }
-    }
 
     /// <summary>设置采样间隔（ms）。间隔变化会清空速率窗口，攒够两个样本后重新出数。</summary>
     public void SetInterval(long intervalMs)
@@ -72,15 +57,13 @@ internal sealed class NetworkSampler
         }
     }
 
-    /// <summary>设置参与统计的网卡 Id 集合；传 null 或空集合表示统计全部候选网卡。</summary>
-    public void SetNicFilter(IReadOnlyCollection<string>? ids)
+    /// <summary>按网卡 Id 筛选；空字符串表示统计全部候选网卡。</summary>
+    public void SetNicFilter(string id)
     {
         lock (_gate)
         {
-            _nicFilter.Clear();
-            if (ids != null)
-                foreach (var id in ids)
-                    if (!string.IsNullOrEmpty(id)) _nicFilter.Add(id);
+            if (string.Equals(_nicFilter, id, StringComparison.Ordinal)) return;
+            _nicFilter = id;
             _interfacesReadAt = -1; // 立即重新枚举并应用过滤
             _window.Clear();        // 统计口径变了，旧窗口作废
         }
@@ -111,7 +94,7 @@ internal sealed class NetworkSampler
     }
 
     /// <summary>候选网卡里找无线网卡（名称含 WLAN / Wi-Fi / Wireless / 无线），供插件首次运行时默认选中。</summary>
-    public bool TryFindWlanNic(out string id, out string name)
+    public bool TryFindWlanNic(out string id)
     {
         lock (_gate)
         {
@@ -122,14 +105,12 @@ internal sealed class NetworkSampler
                     if (nic.Name.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         id = nic.Id;
-                        name = nic.Name;
                         return true;
                     }
                 }
             }
         }
         id = "";
-        name = "";
         return false;
     }
 
@@ -214,12 +195,12 @@ internal sealed class NetworkSampler
             }
             _nicList = infos;
 
-            // 应用网卡过滤：空集合 = 全部候选网卡
+            // 应用网卡过滤：空字符串 = 全部候选网卡
             var selected = new List<NetworkInterface>(candidates.Count);
             var keys = new HashSet<string>(StringComparer.Ordinal);
             foreach (var nic in candidates)
             {
-                if (_nicFilter.Count > 0 && !_nicFilter.Contains(nic.Id)) continue;
+                if (_nicFilter.Length > 0 && !string.Equals(_nicFilter, nic.Id, StringComparison.Ordinal)) continue;
                 selected.Add(nic);
                 keys.Add(nic.Id);
             }
